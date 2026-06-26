@@ -1,9 +1,10 @@
-using System.Security.Cryptography;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using System.Text;
-using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.IdentityModel.Tokens;
 
 // In-memory refresh token store (resets on restart; swap for Redis/DB in production)
 public static class RefreshTokenStore
@@ -39,23 +40,10 @@ public static class AuthEndpoints
             if (request.Email == "admin@tetotoys.com" && request.Password == "password123")
             {
                 // Short-lived access token (15 minutes)
-                var accessPayload = new
-                {
-                    sub = request.Email,
-                    email = request.Email,
-                    exp = DateTimeOffset.UtcNow.AddMinutes(15).ToUnixTimeSeconds()
-                };
-                string accessToken = JwtHelper.GenerateToken(accessPayload, Secret);
+                string accessToken = JwtHelper.GenerateToken(request.Email, Secret, expireMinutes: 15);
 
                 // Long-lived refresh token (7 days)
-                var refreshPayload = new
-                {
-                    sub = request.Email,
-                    email = request.Email,
-                    type = "refresh",
-                    exp = DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeSeconds()
-                };
-                string refreshToken = JwtHelper.GenerateToken(refreshPayload, Secret);
+                string refreshToken = JwtHelper.GenerateToken(request.Email, Secret, expireMinutes: 7 * 24 * 60, tokenType: "refresh");
                 RefreshTokenStore.Add(refreshToken);
 
                 SetRefreshCookie(context, refreshToken);
@@ -78,36 +66,21 @@ public static class AuthEndpoints
             // Rotate: invalidate old token
             RefreshTokenStore.Remove(refreshToken);
 
-            // Decode email from payload (base64url decode)
+            // Decode email from the JWT using JwtSecurityTokenHandler
             string email;
             try
             {
-                var parts = refreshToken.Split('.');
-                var payloadJson = Base64UrlDecode(parts[1]);
-                using var doc = JsonDocument.Parse(payloadJson);
-                email = doc.RootElement.GetProperty("email").GetString()!;
+                var handler = new JwtSecurityTokenHandler();
+                var jwt = handler.ReadJwtToken(refreshToken);
+                email = jwt.Claims.First(c => c.Type == JwtRegisteredClaimNames.Email).Value;
             }
             catch
             {
                 return Results.Json(new { error = "invalid_token", error_description = "Malformed refresh token." }, statusCode: 401);
             }
 
-            var newAccessPayload = new
-            {
-                sub = email,
-                email = email,
-                exp = DateTimeOffset.UtcNow.AddMinutes(15).ToUnixTimeSeconds()
-            };
-            string newAccessToken = JwtHelper.GenerateToken(newAccessPayload, Secret);
-
-            var newRefreshPayload = new
-            {
-                sub = email,
-                email = email,
-                type = "refresh",
-                exp = DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeSeconds()
-            };
-            string newRefreshToken = JwtHelper.GenerateToken(newRefreshPayload, Secret);
+            string newAccessToken = JwtHelper.GenerateToken(email, Secret, expireMinutes: 15);
+            string newRefreshToken = JwtHelper.GenerateToken(email, Secret, expireMinutes: 7 * 24 * 60, tokenType: "refresh");
             RefreshTokenStore.Add(newRefreshToken);
 
             SetRefreshCookie(context, newRefreshToken);
@@ -142,13 +115,6 @@ public static class AuthEndpoints
             Path = "/",
         });
     }
-
-    private static string Base64UrlDecode(string input)
-    {
-        var padding = (4 - input.Length % 4) % 4;
-        var base64 = input.Replace('-', '+').Replace('_', '/') + new string('=', padding);
-        return Encoding.UTF8.GetString(Convert.FromBase64String(base64));
-    }
 }
 
 public record LoginRequest(string Email, string Password);
@@ -161,30 +127,39 @@ public record LoginResponse(
 
 public static class JwtHelper
 {
-    private static string Base64UrlEncode(byte[] input)
+    private const string Issuer = "tatotoys-api";
+    private const string Audience = "tatotoys-frontend";
+
+    public static string GenerateToken(string email, string secretKey, int expireMinutes, string tokenType = "access")
     {
-        return Convert.ToBase64String(input)
-            .Replace("=", "")
-            .Replace("+", "-")
-            .Replace("/", "_");
-    }
+        var tokenHandler = new JwtSecurityTokenHandler();
+        var key = Encoding.UTF8.GetBytes(secretKey);
 
-    public static string GenerateToken(object payload, string secret)
-    {
-        var header = new { alg = "HS256", typ = "JWT" };
+        var claims = new List<Claim>
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, email),
+            new Claim(JwtRegisteredClaimNames.Email, email),
+            new Claim(ClaimTypes.Role, "User"),
+        };
 
-        string headerJson = JsonSerializer.Serialize(header);
-        string payloadJson = JsonSerializer.Serialize(payload);
+        if (tokenType == "refresh")
+        {
+            claims.Add(new Claim("token_type", "refresh"));
+        }
 
-        string headerB64 = Base64UrlEncode(Encoding.UTF8.GetBytes(headerJson));
-        string payloadB64 = Base64UrlEncode(Encoding.UTF8.GetBytes(payloadJson));
+        var tokenDescriptor = new SecurityTokenDescriptor
+        {
+            Subject = new ClaimsIdentity(claims),
+            Expires = DateTime.UtcNow.AddMinutes(expireMinutes),
+            Issuer = Issuer,
+            Audience = Audience,
+            SigningCredentials = new SigningCredentials(
+                new SymmetricSecurityKey(key),
+                SecurityAlgorithms.HmacSha256Signature
+            )
+        };
 
-        string signingInput = $"{headerB64}.{payloadB64}";
-
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-        byte[] signatureBytes = hmac.ComputeHash(Encoding.UTF8.GetBytes(signingInput));
-        string signatureB64 = Base64UrlEncode(signatureBytes);
-
-        return $"{signingInput}.{signatureB64}";
+        var token = tokenHandler.CreateToken(tokenDescriptor);
+        return tokenHandler.WriteToken(token);
     }
 }
