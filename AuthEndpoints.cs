@@ -5,27 +5,19 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.IdentityModel.Tokens;
-
-// In-memory refresh token store (resets on restart; swap for Redis/DB in production)
-public static class RefreshTokenStore
-{
-    private static readonly HashSet<string> _tokens = new();
-
-    public static void Add(string token) => _tokens.Add(token);
-    public static bool Contains(string token) => _tokens.Contains(token);
-    public static void Remove(string token) => _tokens.Remove(token);
-}
+using StackExchange.Redis;
 
 public static class AuthEndpoints
 {
     private const string RefreshCookieName = "refresh_token";
     private const string Secret = "SuperSecretKeyForTetoToysTokenAuth2026";
+    private static readonly TimeSpan RefreshTokenTtl = TimeSpan.FromDays(7);
 
     public static void MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/auth");
 
-        group.MapPost("/login", (LoginRequest request, HttpContext context) =>
+        group.MapPost("/login", async (LoginRequest request, HttpContext context) =>
         {
             if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
             {
@@ -44,7 +36,10 @@ public static class AuthEndpoints
 
                 // Long-lived refresh token (7 days)
                 string refreshToken = JwtHelper.GenerateToken(request.Email, Secret, expireMinutes: 7 * 24 * 60, tokenType: "refresh");
-                RefreshTokenStore.Add(refreshToken);
+
+                // Store in Redis with 7-day TTL
+                var db = context.RequestServices.GetRequiredService<IConnectionMultiplexer>().GetDatabase();
+                await db.StringSetAsync($"refresh:{refreshToken}", "1", RefreshTokenTtl);
 
                 SetRefreshCookie(context, refreshToken);
 
@@ -54,17 +49,18 @@ public static class AuthEndpoints
             return Results.Json(new { error = "invalid_grant", error_description = "Invalid email or password." }, statusCode: 401);
         });
 
-        group.MapPost("/refresh", (HttpContext context) =>
+        group.MapPost("/refresh", async (HttpContext context) =>
         {
             var refreshToken = context.Request.Cookies[RefreshCookieName];
+            var db = context.RequestServices.GetRequiredService<IConnectionMultiplexer>().GetDatabase();
 
-            if (string.IsNullOrEmpty(refreshToken) || !RefreshTokenStore.Contains(refreshToken))
+            if (string.IsNullOrEmpty(refreshToken) || !await db.KeyExistsAsync($"refresh:{refreshToken}"))
             {
                 return Results.Json(new { error = "invalid_token", error_description = "Missing or invalid refresh token." }, statusCode: 401);
             }
 
             // Rotate: invalidate old token
-            RefreshTokenStore.Remove(refreshToken);
+            await db.KeyDeleteAsync($"refresh:{refreshToken}");
 
             // Decode email from the JWT using JwtSecurityTokenHandler
             string email;
@@ -81,19 +77,20 @@ public static class AuthEndpoints
 
             string newAccessToken = JwtHelper.GenerateToken(email, Secret, expireMinutes: 15);
             string newRefreshToken = JwtHelper.GenerateToken(email, Secret, expireMinutes: 7 * 24 * 60, tokenType: "refresh");
-            RefreshTokenStore.Add(newRefreshToken);
+            await db.StringSetAsync($"refresh:{newRefreshToken}", "1", RefreshTokenTtl);
 
             SetRefreshCookie(context, newRefreshToken);
 
             return Results.Ok(new LoginResponse(newAccessToken, "Bearer", 900));
         });
 
-        group.MapPost("/logout", (HttpContext context) =>
+        group.MapPost("/logout", async (HttpContext context) =>
         {
             var refreshToken = context.Request.Cookies[RefreshCookieName];
             if (!string.IsNullOrEmpty(refreshToken))
             {
-                RefreshTokenStore.Remove(refreshToken);
+                var db = context.RequestServices.GetRequiredService<IConnectionMultiplexer>().GetDatabase();
+                await db.KeyDeleteAsync($"refresh:{refreshToken}");
             }
 
             context.Response.Cookies.Delete(RefreshCookieName, new CookieOptions { Path = "/" });

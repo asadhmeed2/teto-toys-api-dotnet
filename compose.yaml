@@ -3,9 +3,21 @@ services:
     build:
       context: .
       target: final
+    env_file:
+      - .env
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      CorsOrigin: http://localhost:4200
+      # These override .env values when running via Docker Compose
+      CorsOrigin: ${CorsOrigin:-http://localhost:4200}
+      Redis__Host: shared_redis
+      Redis__Port: ${Redis__Port:-6379}
+      Redis__Password: ${Redis__Password}
     ports:
       - "8080:8080"
     restart: unless-stopped
+    networks:
+      - infrastructure_network
+
+networks:
+  infrastructure_network:
+    external: true
