@@ -96,6 +96,45 @@ public static class AuthEndpoints
             context.Response.Cookies.Delete(RefreshCookieName, new CookieOptions { Path = "/" });
             return Results.Ok(new { message = "Logged out successfully" });
         });
+
+        // GET /me — validate access token and return the current user's info
+        group.MapGet("/me", (HttpContext context) =>
+        {
+            var authHeader = context.Request.Headers["Authorization"].ToString();
+            if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Json(new { error = "unauthorized", error_description = "Missing or invalid Authorization header." }, statusCode: 401);
+            }
+
+            var token = authHeader["Bearer ".Length..].Trim();
+            try
+            {
+                var tokenHandler = new JwtSecurityTokenHandler();
+                var key = Encoding.UTF8.GetBytes(Secret);
+
+                tokenHandler.ValidateToken(token, new TokenValidationParameters
+                {
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(key),
+                    ValidateIssuer = true,
+                    ValidIssuer = JwtHelper.Issuer,
+                    ValidateAudience = true,
+                    ValidAudience = JwtHelper.Audience,
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.Zero,
+                }, out var validatedToken);
+
+                var jwt = (JwtSecurityToken)validatedToken;
+                var email = jwt.Claims.First(c => c.Type == JwtRegisteredClaimNames.Email).Value;
+                var role = jwt.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value ?? "User";
+
+                return Results.Ok(new { email, role });
+            }
+            catch
+            {
+                return Results.Json(new { error = "unauthorized", error_description = "Token is invalid or expired." }, statusCode: 401);
+            }
+        });
     }
 
     private static void SetRefreshCookie(HttpContext context, string token)
@@ -124,8 +163,8 @@ public record LoginResponse(
 
 public static class JwtHelper
 {
-    private const string Issuer = "tatotoys-api";
-    private const string Audience = "tatotoys-frontend";
+    public const string Issuer = "tatotoys-api";
+    public const string Audience = "tatotoys-frontend";
 
     public static string GenerateToken(string email, string secretKey, int expireMinutes, string tokenType = "access")
     {
