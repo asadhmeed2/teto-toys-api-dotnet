@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -135,6 +136,72 @@ public static class AuthEndpoints
                 return Results.Json(new { error = "unauthorized", error_description = "Token is invalid or expired." }, statusCode: 401);
             }
         });
+
+        group.MapPost("/register", async (RegisterRequest request, HttpContext context) =>
+        {
+            // --- Required field checks ---
+            if (string.IsNullOrWhiteSpace(request.FirstName) ||
+                string.IsNullOrWhiteSpace(request.LastName) ||
+                string.IsNullOrWhiteSpace(request.Email) ||
+                string.IsNullOrWhiteSpace(request.Password) ||
+                string.IsNullOrWhiteSpace(request.ConfirmPassword))
+            {
+                return Results.BadRequest(new { error = "invalid_request", error_description = "All fields are required." });
+            }
+
+            // --- Email format validation ---
+            if (!Regex.IsMatch(request.Email, @"^[^\s@]+@[^\s@]+\.[^\s@]+$"))
+            {
+                return Results.BadRequest(new { error = "invalid_request", error_description = "Please enter a valid email address." });
+            }
+
+            // --- Password strength ---
+            if (request.Password.Length < 8)
+            {
+                return Results.BadRequest(new { error = "invalid_request", error_description = "Password must be at least 8 characters." });
+            }
+
+            // --- Passwords match ---
+            if (request.Password != request.ConfirmPassword)
+            {
+                return Results.BadRequest(new { error = "invalid_request", error_description = "Passwords do not match." });
+            }
+
+            // --- Compliance checks ---
+            if (!request.IsAdult)
+            {
+                return Results.BadRequest(new { error = "invalid_request", error_description = "You must confirm that you are 18 years or older." });
+            }
+
+            if (!request.TermsAccepted)
+            {
+                return Results.BadRequest(new { error = "invalid_request", error_description = "You must accept the Terms of Service and Privacy Policy." });
+            }
+
+            // --- Hash password ---
+            string passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password, workFactor: 12);
+
+            // --- Stub response (no DB yet) ---
+            var userId = Guid.NewGuid().ToString();
+            var now = DateTimeOffset.UtcNow;
+
+            return Results.Json(new
+            {
+                message = "Account created successfully.",
+                user = new
+                {
+                    user_id = userId,
+                    email = request.Email.Trim(),
+                    first_name = request.FirstName.Trim(),
+                    last_name = request.LastName.Trim(),
+                    is_adult = true,
+                    terms_accepted_at = now,
+                    terms_version = "1.0",
+                    marketing_opt_in = request.MarketingOptIn,
+                    created_at = now,
+                }
+            }, statusCode: 201);
+        });
     }
 
     private static void SetRefreshCookie(HttpContext context, string token)
@@ -159,6 +226,17 @@ public record LoginResponse(
     [property: System.Text.Json.Serialization.JsonPropertyName("access_token")] string AccessToken,
     [property: System.Text.Json.Serialization.JsonPropertyName("token_type")] string TokenType,
     [property: System.Text.Json.Serialization.JsonPropertyName("expires_in")] int ExpiresIn
+);
+
+public record RegisterRequest(
+    [property: System.Text.Json.Serialization.JsonPropertyName("first_name")] string FirstName,
+    [property: System.Text.Json.Serialization.JsonPropertyName("last_name")] string LastName,
+    [property: System.Text.Json.Serialization.JsonPropertyName("email")] string Email,
+    [property: System.Text.Json.Serialization.JsonPropertyName("password")] string Password,
+    [property: System.Text.Json.Serialization.JsonPropertyName("confirm_password")] string ConfirmPassword,
+    [property: System.Text.Json.Serialization.JsonPropertyName("is_adult")] bool IsAdult,
+    [property: System.Text.Json.Serialization.JsonPropertyName("terms_accepted")] bool TermsAccepted,
+    [property: System.Text.Json.Serialization.JsonPropertyName("marketing_opt_in")] bool MarketingOptIn
 );
 
 public static class JwtHelper
