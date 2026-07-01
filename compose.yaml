@@ -12,6 +12,8 @@ services:
       Redis__Host: shared_redis
       Redis__Port: ${Redis__Port:-6379}
       Redis__Password: ${Redis__Password}
+      MySQL__ConnectionString: ${MYSQL__ConnectionString}
+      MySQL__Server: shared_mysql
     ports:
       - "8080:8080"
     restart: unless-stopped

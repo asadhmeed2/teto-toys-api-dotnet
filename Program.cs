@@ -1,5 +1,6 @@
 using DotNetEnv;
 using StackExchange.Redis;
+using TatoToys.Api.Services;
 
 // Load .env file before building the host so env vars are available to IConfiguration.
 // clobberExistingVars: false — real Docker/system env vars always win over the .env file.
@@ -43,6 +44,40 @@ var multiplexer = ConnectionMultiplexer.Connect(redisConfig);
 
 builder.Services.AddSingleton<IConnectionMultiplexer>(multiplexer);
 
+// MySQL — DatabaseService registered as scoped (one connection per request).
+var rawConnectionString = builder.Configuration["MySQL:ConnectionString"]
+    ?? builder.Configuration.GetConnectionString("DefaultConnection");
+
+var connBuilder = new MySql.Data.MySqlClient.MySqlConnectionStringBuilder(rawConnectionString);
+
+if (!string.IsNullOrEmpty(builder.Configuration["MySQL:Server"]))
+{
+    connBuilder.Server = builder.Configuration["MySQL:Server"];
+}
+if (!string.IsNullOrEmpty(builder.Configuration["MySQL:Port"]))
+{
+    if (uint.TryParse(builder.Configuration["MySQL:Port"], out var port))
+    {
+        connBuilder.Port = port;
+    }
+}
+if (!string.IsNullOrEmpty(builder.Configuration["MySQL:Database"]))
+{
+    connBuilder.Database = builder.Configuration["MySQL:Database"];
+}
+if (!string.IsNullOrEmpty(builder.Configuration["MySQL:User"]))
+{
+    connBuilder.UserID = builder.Configuration["MySQL:User"];
+}
+if (!string.IsNullOrEmpty(builder.Configuration["MySQL:Password"]))
+{
+    connBuilder.Password = builder.Configuration["MySQL:Password"];
+}
+
+var mysqlConnectionString = connBuilder.ConnectionString;
+
+builder.Services.AddScoped(_ => new DatabaseService(mysqlConnectionString));
+
 var app = builder.Build();
 
 if (multiplexer.IsConnected)
@@ -52,6 +87,19 @@ if (multiplexer.IsConnected)
 else
 {
     app.Logger.LogError("❌ Failed to connect to Redis at startup.");
+}
+
+// Test MySQL connection at startup
+try
+{
+    using var scope = app.Services.CreateScope();
+    var dbService = scope.ServiceProvider.GetRequiredService<DatabaseService>();
+    await dbService.TestConnectionAsync();
+    app.Logger.LogInformation("✅ Successfully connected to MySQL at startup!");
+}
+catch (Exception ex)
+{
+    app.Logger.LogError(ex, "❌ MySQL connection failed at startup.");
 }
 
 app.UseCors("AllowAngular");

@@ -6,12 +6,14 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.IdentityModel.Tokens;
+using MySql.Data.MySqlClient;
 using StackExchange.Redis;
+using TatoToys.Api.Services;
 
 public static class AuthEndpoints
 {
     private const string RefreshCookieName = "refresh_token";
-    private const string Secret = "SuperSecretKeyForTetoToysTokenAuth2026";
+
     private static readonly TimeSpan RefreshTokenTtl = TimeSpan.FromDays(7);
 
     public static void MapAuthEndpoints(this IEndpointRouteBuilder app)
@@ -20,6 +22,15 @@ public static class AuthEndpoints
 
         group.MapPost("/login", async (LoginRequest request, HttpContext context) =>
         {
+
+            var builder = WebApplication.CreateBuilder();
+            var Secret = builder.Configuration["JWT:Secret"];
+
+            if(string.IsNullOrEmpty(Secret)){
+                Console.Error.WriteLine("JWT Secret is not configured.");
+                return Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500);
+            }
+
             if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
             {
                 return Results.BadRequest(new { error = "invalid_request", error_description = "Email and password are required." });
@@ -30,15 +41,32 @@ public static class AuthEndpoints
                 return Results.BadRequest(new { error = "invalid_request", error_description = "Password must be at least 8 characters." });
             }
 
-            if (request.Email == "admin@tetotoys.com" && request.Password == "password123")
+            try
             {
-                // Short-lived access token (15 minutes)
-                string accessToken = JwtHelper.GenerateToken(request.Email, Secret, expireMinutes: 15);
+                Console.WriteLine("Login attempt with email: " + request.Email);
 
-                // Long-lived refresh token (7 days)
-                string refreshToken = JwtHelper.GenerateToken(request.Email, Secret, expireMinutes: 7 * 24 * 60, tokenType: "refresh");
+                var dbService = context.RequestServices.GetRequiredService<DatabaseService>();
+                var user = await dbService.GetUserByEmailAsync(request.Email);
 
-                // Store in Redis with 7-day TTL
+                 if (user is null)
+                {
+                    return Results.Json(new { error = "invalid_grant", error_description = "Invalid email or password." }, statusCode: 401);
+                }
+
+                if (!user.IsActive)
+                {
+                    return Results.Json(new { error = "invalid_grant", error_description = "Account is deactivated." }, statusCode: 401);
+                }
+                // Verify password against stored hash
+                if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+                {
+                    return Results.Json(new { error = "invalid_grant", error_description = "Invalid email or password." }, statusCode: 401);
+                }
+                // Update last_login timestamp
+                await dbService.UpdateLastLoginAsync(user.UserId);
+                string accessToken = JwtHelper.GenerateToken(user.Email, Secret, expireMinutes: 15);
+                string refreshToken = JwtHelper.GenerateToken(user.Email, Secret, expireMinutes: 7 * 24 * 60, tokenType: "refresh");
+
                 var db = context.RequestServices.GetRequiredService<IConnectionMultiplexer>().GetDatabase();
                 await db.StringSetAsync($"refresh:{refreshToken}", "1", RefreshTokenTtl);
 
@@ -47,11 +75,24 @@ public static class AuthEndpoints
                 return Results.Ok(new LoginResponse(accessToken, "Bearer", 900));
             }
 
-            return Results.Json(new { error = "invalid_grant", error_description = "Invalid email or password." }, statusCode: 401);
+              catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Login DB error: {ex.Message}");
+                return Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500);
+            }
         });
 
         group.MapPost("/refresh", async (HttpContext context) =>
         {
+
+            var builder = WebApplication.CreateBuilder();
+            var Secret = builder.Configuration["JWT:Secret"];
+
+            if(string.IsNullOrEmpty(Secret)){
+                Console.Error.WriteLine("JWT Secret is not configured.");
+                return Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500);
+            }
+
             var refreshToken = context.Request.Cookies[RefreshCookieName];
             var db = context.RequestServices.GetRequiredService<IConnectionMultiplexer>().GetDatabase();
 
@@ -101,6 +142,15 @@ public static class AuthEndpoints
         // GET /me — validate access token and return the current user's info
         group.MapGet("/me", (HttpContext context) =>
         {
+
+            var builder = WebApplication.CreateBuilder();
+            var Secret = builder.Configuration["JWT:Secret"];
+
+            if(string.IsNullOrEmpty(Secret)){
+                Console.Error.WriteLine("JWT Secret is not configured.");
+                return Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500);
+            }
+
             var authHeader = context.Request.Headers["Authorization"].ToString();
             if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             {
@@ -181,9 +231,29 @@ public static class AuthEndpoints
             // --- Hash password ---
             string passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password, workFactor: 12);
 
-            // --- Stub response (no DB yet) ---
+           // --- Persist to MySQL ---
             var userId = Guid.NewGuid().ToString();
-            var now = DateTimeOffset.UtcNow;
+            var now = DateTime.UtcNow;
+            var termsVersion = "1.0";
+            try
+            {
+                var dbService = context.RequestServices.GetRequiredService<DatabaseService>();
+                await dbService.CreateUserAsync(
+                    userId, request.Email.Trim(), passwordHash,
+                    request.FirstName.Trim(), request.LastName.Trim(),
+                    true, now, termsVersion, request.MarketingOptIn, now);
+            }
+            catch (MySqlException ex) when (ex.Number == 1062)
+            {
+                return Results.Json(new { error = "conflict", error_description = "An account with this email already exists." }, statusCode: 409);
+            }
+
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Register DB error: {ex.Message}");
+                return Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500);
+            }
+
 
             return Results.Json(new
             {
@@ -196,7 +266,7 @@ public static class AuthEndpoints
                     last_name = request.LastName.Trim(),
                     is_adult = true,
                     terms_accepted_at = now,
-                    terms_version = "1.0",
+                    terms_version = termsVersion,
                     marketing_opt_in = request.MarketingOptIn,
                     created_at = now,
                 }
