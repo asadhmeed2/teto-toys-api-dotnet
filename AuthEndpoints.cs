@@ -1,20 +1,16 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using Microsoft.IdentityModel.Tokens;
-using MySql.Data.MySqlClient;
-using StackExchange.Redis;
-using TatoToys.Api.Services;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.Hosting;
+using TatoToys.Application.DTOs;
+using TatoToys.Application.Services;
 
 public static class AuthEndpoints
 {
     private const string RefreshCookieName = "refresh_token";
-
-    private static readonly TimeSpan RefreshTokenTtl = TimeSpan.FromDays(7);
 
     public static void MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
@@ -22,131 +18,72 @@ public static class AuthEndpoints
 
         group.MapPost("/login", async (LoginRequest request, HttpContext context) =>
         {
+            var config = context.RequestServices.GetRequiredService<IConfiguration>();
+            var secret = config["JWT:Secret"];
 
-            var builder = WebApplication.CreateBuilder();
-            var Secret = builder.Configuration["JWT:Secret"];
-
-            if(string.IsNullOrEmpty(Secret)){
+            if (string.IsNullOrEmpty(secret))
+            {
                 Console.Error.WriteLine("JWT Secret is not configured.");
                 return Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500);
             }
 
-            if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
+            var authService = context.RequestServices.GetRequiredService<IAuthService>();
+            var result = await authService.LoginAsync(request, secret);
+
+            if (!result.Success)
             {
-                return Results.BadRequest(new { error = "invalid_request", error_description = "Email and password are required." });
+                return Results.Json(new { error = result.Error, error_description = result.ErrorDescription }, statusCode: result.StatusCode);
             }
 
-            if (request.Password.Length < 8)
-            {
-                return Results.BadRequest(new { error = "invalid_request", error_description = "Password must be at least 8 characters." });
-            }
+            SetRefreshCookie(context, result.RefreshToken!);
 
-            try
-            {
-                Console.WriteLine("Login attempt with email: " + request.Email);
-
-                var dbService = context.RequestServices.GetRequiredService<DatabaseService>();
-                var user = await dbService.GetUserByEmailAsync(request.Email);
-
-                 if (user is null)
-                {
-                    return Results.Json(new { error = "invalid_grant", error_description = "Invalid email or password." }, statusCode: 401);
-                }
-
-                if (!user.IsActive)
-                {
-                    return Results.Json(new { error = "invalid_grant", error_description = "Account is deactivated." }, statusCode: 401);
-                }
-                // Verify password against stored hash
-                if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
-                {
-                    return Results.Json(new { error = "invalid_grant", error_description = "Invalid email or password." }, statusCode: 401);
-                }
-                // Update last_login timestamp
-                await dbService.UpdateLastLoginAsync(user.UserId);
-                string accessToken = JwtHelper.GenerateToken(user.Email, Secret, expireMinutes: 15);
-                string refreshToken = JwtHelper.GenerateToken(user.Email, Secret, expireMinutes: 7 * 24 * 60, tokenType: "refresh");
-
-                var db = context.RequestServices.GetRequiredService<IConnectionMultiplexer>().GetDatabase();
-                await db.StringSetAsync($"refresh:{refreshToken}", "1", RefreshTokenTtl);
-
-                SetRefreshCookie(context, refreshToken);
-
-                return Results.Ok(new LoginResponse(accessToken, "Bearer", 900));
-            }
-
-              catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Login DB error: {ex.Message}");
-                return Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500);
-            }
+            return Results.Ok(result.Response);
         });
 
         group.MapPost("/refresh", async (HttpContext context) =>
         {
+            var config = context.RequestServices.GetRequiredService<IConfiguration>();
+            var secret = config["JWT:Secret"];
 
-            var builder = WebApplication.CreateBuilder();
-            var Secret = builder.Configuration["JWT:Secret"];
-
-            if(string.IsNullOrEmpty(Secret)){
+            if (string.IsNullOrEmpty(secret))
+            {
                 Console.Error.WriteLine("JWT Secret is not configured.");
                 return Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500);
             }
 
             var refreshToken = context.Request.Cookies[RefreshCookieName];
-            var db = context.RequestServices.GetRequiredService<IConnectionMultiplexer>().GetDatabase();
+            
+            var authService = context.RequestServices.GetRequiredService<IAuthService>();
+            var result = await authService.RefreshTokenAsync(refreshToken ?? "", secret);
 
-            if (string.IsNullOrEmpty(refreshToken) || !await db.KeyExistsAsync($"refresh:{refreshToken}"))
+            if (!result.Success)
             {
-                return Results.Json(new { error = "invalid_token", error_description = "Missing or invalid refresh token." }, statusCode: 401);
+                return Results.Json(new { error = result.Error, error_description = result.ErrorDescription }, statusCode: result.StatusCode);
             }
 
-            // Rotate: invalidate old token
-            await db.KeyDeleteAsync($"refresh:{refreshToken}");
+            SetRefreshCookie(context, result.RefreshToken!);
 
-            // Decode email from the JWT using JwtSecurityTokenHandler
-            string email;
-            try
-            {
-                var handler = new JwtSecurityTokenHandler();
-                var jwt = handler.ReadJwtToken(refreshToken);
-                email = jwt.Claims.First(c => c.Type == JwtRegisteredClaimNames.Email).Value;
-            }
-            catch
-            {
-                return Results.Json(new { error = "invalid_token", error_description = "Malformed refresh token." }, statusCode: 401);
-            }
-
-            string newAccessToken = JwtHelper.GenerateToken(email, Secret, expireMinutes: 15);
-            string newRefreshToken = JwtHelper.GenerateToken(email, Secret, expireMinutes: 7 * 24 * 60, tokenType: "refresh");
-            await db.StringSetAsync($"refresh:{newRefreshToken}", "1", RefreshTokenTtl);
-
-            SetRefreshCookie(context, newRefreshToken);
-
-            return Results.Ok(new LoginResponse(newAccessToken, "Bearer", 900));
+            return Results.Ok(result.Response);
         });
 
         group.MapPost("/logout", async (HttpContext context) =>
         {
             var refreshToken = context.Request.Cookies[RefreshCookieName];
-            if (!string.IsNullOrEmpty(refreshToken))
-            {
-                var db = context.RequestServices.GetRequiredService<IConnectionMultiplexer>().GetDatabase();
-                await db.KeyDeleteAsync($"refresh:{refreshToken}");
-            }
+            
+            var authService = context.RequestServices.GetRequiredService<IAuthService>();
+            await authService.LogoutAsync(refreshToken);
 
             context.Response.Cookies.Delete(RefreshCookieName, new CookieOptions { Path = "/" });
             return Results.Ok(new { message = "Logged out successfully" });
         });
 
-        // GET /me — validate access token and return the current user's info
-        group.MapGet("/me", (HttpContext context) =>
+        group.MapGet("/me", async (HttpContext context) =>
         {
+            var config = context.RequestServices.GetRequiredService<IConfiguration>();
+            var secret = config["JWT:Secret"];
 
-            var builder = WebApplication.CreateBuilder();
-            var Secret = builder.Configuration["JWT:Secret"];
-
-            if(string.IsNullOrEmpty(Secret)){
+            if (string.IsNullOrEmpty(secret))
+            {
                 Console.Error.WriteLine("JWT Secret is not configured.");
                 return Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500);
             }
@@ -158,119 +95,29 @@ public static class AuthEndpoints
             }
 
             var token = authHeader["Bearer ".Length..].Trim();
-            try
+
+            var authService = context.RequestServices.GetRequiredService<IAuthService>();
+            var result = await authService.GetCurrentUserAsync(token, secret);
+
+            if (!result.Success)
             {
-                var tokenHandler = new JwtSecurityTokenHandler();
-                var key = Encoding.UTF8.GetBytes(Secret);
-
-                tokenHandler.ValidateToken(token, new TokenValidationParameters
-                {
-                    ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = new SymmetricSecurityKey(key),
-                    ValidateIssuer = true,
-                    ValidIssuer = JwtHelper.Issuer,
-                    ValidateAudience = true,
-                    ValidAudience = JwtHelper.Audience,
-                    ValidateLifetime = true,
-                    ClockSkew = TimeSpan.Zero,
-                }, out var validatedToken);
-
-                var jwt = (JwtSecurityToken)validatedToken;
-                var email = jwt.Claims.First(c => c.Type == JwtRegisteredClaimNames.Email).Value;
-                var role = jwt.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value ?? "User";
-
-                return Results.Ok(new { email, role });
+                return Results.Json(new { error = result.Error, error_description = result.ErrorDescription }, statusCode: result.StatusCode);
             }
-            catch
-            {
-                return Results.Json(new { error = "unauthorized", error_description = "Token is invalid or expired." }, statusCode: 401);
-            }
+
+            return Results.Ok(result.UserInfo);
         });
 
         group.MapPost("/register", async (RegisterRequest request, HttpContext context) =>
         {
-            // --- Required field checks ---
-            if (string.IsNullOrWhiteSpace(request.FirstName) ||
-                string.IsNullOrWhiteSpace(request.LastName) ||
-                string.IsNullOrWhiteSpace(request.Email) ||
-                string.IsNullOrWhiteSpace(request.Password) ||
-                string.IsNullOrWhiteSpace(request.ConfirmPassword))
+            var authService = context.RequestServices.GetRequiredService<IAuthService>();
+            var result = await authService.RegisterAsync(request);
+
+            if (!result.Success)
             {
-                return Results.BadRequest(new { error = "invalid_request", error_description = "All fields are required." });
+                return Results.Json(new { error = result.Error, error_description = result.ErrorDescription }, statusCode: result.StatusCode);
             }
 
-            // --- Email format validation ---
-            if (!Regex.IsMatch(request.Email, @"^[^\s@]+@[^\s@]+\.[^\s@]+$"))
-            {
-                return Results.BadRequest(new { error = "invalid_request", error_description = "Please enter a valid email address." });
-            }
-
-            // --- Password strength ---
-            if (request.Password.Length < 8)
-            {
-                return Results.BadRequest(new { error = "invalid_request", error_description = "Password must be at least 8 characters." });
-            }
-
-            // --- Passwords match ---
-            if (request.Password != request.ConfirmPassword)
-            {
-                return Results.BadRequest(new { error = "invalid_request", error_description = "Passwords do not match." });
-            }
-
-            // --- Compliance checks ---
-            if (!request.IsAdult)
-            {
-                return Results.BadRequest(new { error = "invalid_request", error_description = "You must confirm that you are 18 years or older." });
-            }
-
-            if (!request.TermsAccepted)
-            {
-                return Results.BadRequest(new { error = "invalid_request", error_description = "You must accept the Terms of Service and Privacy Policy." });
-            }
-
-            // --- Hash password ---
-            string passwordHash = BCrypt.Net.BCrypt.HashPassword(request.Password, workFactor: 12);
-
-           // --- Persist to MySQL ---
-            var userId = Guid.NewGuid().ToString();
-            var now = DateTime.UtcNow;
-            var termsVersion = "1.0";
-            try
-            {
-                var dbService = context.RequestServices.GetRequiredService<DatabaseService>();
-                await dbService.CreateUserAsync(
-                    userId, request.Email.Trim(), passwordHash,
-                    request.FirstName.Trim(), request.LastName.Trim(),
-                    true, now, termsVersion, request.MarketingOptIn, now);
-            }
-            catch (MySqlException ex) when (ex.Number == 1062)
-            {
-                return Results.Json(new { error = "conflict", error_description = "An account with this email already exists." }, statusCode: 409);
-            }
-
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Register DB error: {ex.Message}");
-                return Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500);
-            }
-
-
-            return Results.Json(new
-            {
-                message = "Account created successfully.",
-                user = new
-                {
-                    user_id = userId,
-                    email = request.Email.Trim(),
-                    first_name = request.FirstName.Trim(),
-                    last_name = request.LastName.Trim(),
-                    is_adult = true,
-                    terms_accepted_at = now,
-                    terms_version = termsVersion,
-                    marketing_opt_in = request.MarketingOptIn,
-                    created_at = now,
-                }
-            }, statusCode: 201);
+            return Results.Json(result.Response, statusCode: result.StatusCode);
         });
     }
 
@@ -287,63 +134,5 @@ public static class AuthEndpoints
             Expires = DateTimeOffset.UtcNow.AddDays(7),
             Path = "/",
         });
-    }
-}
-
-public record LoginRequest(string Email, string Password);
-
-public record LoginResponse(
-    [property: System.Text.Json.Serialization.JsonPropertyName("access_token")] string AccessToken,
-    [property: System.Text.Json.Serialization.JsonPropertyName("token_type")] string TokenType,
-    [property: System.Text.Json.Serialization.JsonPropertyName("expires_in")] int ExpiresIn
-);
-
-public record RegisterRequest(
-    [property: System.Text.Json.Serialization.JsonPropertyName("first_name")] string FirstName,
-    [property: System.Text.Json.Serialization.JsonPropertyName("last_name")] string LastName,
-    [property: System.Text.Json.Serialization.JsonPropertyName("email")] string Email,
-    [property: System.Text.Json.Serialization.JsonPropertyName("password")] string Password,
-    [property: System.Text.Json.Serialization.JsonPropertyName("confirm_password")] string ConfirmPassword,
-    [property: System.Text.Json.Serialization.JsonPropertyName("is_adult")] bool IsAdult,
-    [property: System.Text.Json.Serialization.JsonPropertyName("terms_accepted")] bool TermsAccepted,
-    [property: System.Text.Json.Serialization.JsonPropertyName("marketing_opt_in")] bool MarketingOptIn
-);
-
-public static class JwtHelper
-{
-    public const string Issuer = "tatotoys-api";
-    public const string Audience = "tatotoys-frontend";
-
-    public static string GenerateToken(string email, string secretKey, int expireMinutes, string tokenType = "access")
-    {
-        var tokenHandler = new JwtSecurityTokenHandler();
-        var key = Encoding.UTF8.GetBytes(secretKey);
-
-        var claims = new List<Claim>
-        {
-            new Claim(JwtRegisteredClaimNames.Sub, email),
-            new Claim(JwtRegisteredClaimNames.Email, email),
-            new Claim(ClaimTypes.Role, "User"),
-        };
-
-        if (tokenType == "refresh")
-        {
-            claims.Add(new Claim("token_type", "refresh"));
-        }
-
-        var tokenDescriptor = new SecurityTokenDescriptor
-        {
-            Subject = new ClaimsIdentity(claims),
-            Expires = DateTime.UtcNow.AddMinutes(expireMinutes),
-            Issuer = Issuer,
-            Audience = Audience,
-            SigningCredentials = new SigningCredentials(
-                new SymmetricSecurityKey(key),
-                SecurityAlgorithms.HmacSha256Signature
-            )
-        };
-
-        var token = tokenHandler.CreateToken(tokenDescriptor);
-        return tokenHandler.WriteToken(token);
     }
 }

@@ -7,12 +7,30 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
     <PackageReference Include="DotNetEnv" Version="3.2.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.9" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.1" />
-    <PackageReference Include="MySql.Data" Version="9.3.0" />
-    <PackageReference Include="StackExchange.Redis" Version="3.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="TatoToys.Domain\TatoToys.Domain.csproj" />
+    <ProjectReference Include="TatoToys.Application\TatoToys.Application.csproj" />
+    <ProjectReference Include="TatoToys.Infrastructure\TatoToys.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="TatoToys.Domain\**" />
+    <Compile Remove="TatoToys.Application\**" />
+    <Compile Remove="TatoToys.Infrastructure\**" />
+    <Content Remove="TatoToys.Domain\**" />
+    <Content Remove="TatoToys.Application\**" />
+    <Content Remove="TatoToys.Infrastructure\**" />
+    <EmbeddedResource Remove="TatoToys.Domain\**" />
+    <EmbeddedResource Remove="TatoToys.Application\**" />
+    <EmbeddedResource Remove="TatoToys.Infrastructure\**" />
+    <None Remove="TatoToys.Domain\**" />
+    <None Remove="TatoToys.Application\**" />
+    <None Remove="TatoToys.Infrastructure\**" />
   </ItemGroup>
 
 </Project>

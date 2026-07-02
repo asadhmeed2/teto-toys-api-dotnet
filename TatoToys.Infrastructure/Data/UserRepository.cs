@@ -1,32 +1,40 @@
 using MySql.Data.MySqlClient;
+using TatoToys.Domain.Entities;
+using TatoToys.Domain.Interfaces;
 
-namespace TatoToys.Api.Services;
+namespace TatoToys.Infrastructure.Data;
 
-/// <summary>
-/// MySQL database service — provides methods to create and query users.
-/// Registered as a scoped service in DI; each request gets its own connection.
-/// </summary>
-public class DatabaseService
+public class UserRepository : IUserRepository
 {
     private readonly string _connectionString;
 
-    public DatabaseService(string connectionString)
+    public UserRepository(string connectionString)
     {
         _connectionString = connectionString;
     }
 
-    /// <summary>
-    /// Tests the MySQL connection. Called once at startup.
-    /// </summary>
-    public async Task TestConnectionAsync()
+    public async Task<User?> GetByEmailAsync(string email)
     {
+        const string sql = "SELECT user_id, email, password_hash, is_active FROM TetoToys.users WHERE email = @email";
+
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.Add("@email", MySqlDbType.VarChar).Value = email;
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+            return null;
+
+        return new User
+        {
+            UserId = reader.GetGuid(reader.GetOrdinal("user_id")).ToString(),
+            Email = reader.GetString(reader.GetOrdinal("email")),
+            PasswordHash = reader.GetString(reader.GetOrdinal("password_hash")),
+            IsActive = reader.GetBoolean(reader.GetOrdinal("is_active"))
+        };
     }
 
-    /// <summary>
-    /// Inserts a new user into the users table. Throws on duplicate email.
-    /// </summary>
     public async Task CreateUserAsync(
         string userId, string email, string passwordHash,
         string firstName, string lastName, bool isAdult,
@@ -55,38 +63,6 @@ public class DatabaseService
         await cmd.ExecuteNonQueryAsync();
     }
 
-    /// <summary>
-    /// Looks up a user by email. Returns null if not found.
-    /// </summary>
-    public async Task<UserRow?> GetUserByEmailAsync(string email)
-    {
-        const string sql = "SELECT user_id, email, password_hash, is_active FROM TetoToys.users WHERE email = @email";
-
-
-
-        await using var conn = new MySqlConnection(_connectionString);
-        await conn.OpenAsync();
-        await using var cmd = new MySqlCommand(sql, conn);
-        cmd.Parameters.Add("@email", MySqlDbType.VarChar).Value = email;
-
-        Console.WriteLine("Executing: " + cmd.CommandText);
-        Console.WriteLine("With parameters: " + string.Join(", ", cmd.Parameters.Cast<MySqlParameter>().Select(p => $"{p.ParameterName}={p.Value}")));
-
-        await using var reader = await cmd.ExecuteReaderAsync();
-        if (!await reader.ReadAsync())
-            return null;
-
-        return new UserRow(
-            reader.GetGuid(reader.GetOrdinal("user_id")).ToString(),
-            reader.GetString(reader.GetOrdinal("email")),
-            reader.GetString(reader.GetOrdinal("password_hash")),
-            reader.GetBoolean(reader.GetOrdinal("is_active"))
-        );
-    }
-
-    /// <summary>
-    /// Updates the last_login timestamp for a user.
-    /// </summary>
     public async Task UpdateLastLoginAsync(string userId)
     {
         const string sql = "UPDATE users SET last_login = @now WHERE user_id = @userId";
@@ -99,8 +75,3 @@ public class DatabaseService
         await cmd.ExecuteNonQueryAsync();
     }
 }
-
-/// <summary>
-/// Lightweight record for user data returned from the database.
-/// </summary>
-public record UserRow(string UserId, string Email, string PasswordHash, bool IsActive);
