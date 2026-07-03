@@ -11,4 +11,5 @@ public interface IUserRepository
         DateTime termsAcceptedAt, string termsVersion,
         bool marketingOptIn, DateTime createdAt);
     Task UpdateLastLoginAsync(string userId);
+    Task UpdatePasswordAsync(string userId, string newPasswordHash);
 }

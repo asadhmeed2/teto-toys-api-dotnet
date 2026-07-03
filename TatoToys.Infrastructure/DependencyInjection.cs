@@ -4,6 +4,7 @@ using StackExchange.Redis;
 using TatoToys.Domain.Interfaces;
 using TatoToys.Infrastructure.Caching;
 using TatoToys.Infrastructure.Data;
+using TatoToys.Infrastructure.Email;
 using TatoToys.Infrastructure.Security;
 
 namespace TatoToys.Infrastructure;
@@ -53,6 +54,16 @@ public static class DependencyInjection
         // Security
         services.AddSingleton<IPasswordHasher, PasswordHasher>();
         services.AddSingleton<ITokenService, JwtTokenService>();
+
+        // Email (Resend)
+        var resendApiKey = configuration["Resend:ApiKey"] ?? string.Empty;
+        var resendFromEmail = configuration["Resend:FromEmail"] ?? "noreply@tatotoys.com";
+        services.AddHttpClient();
+        services.AddScoped<IEmailService>(sp =>
+            new ResendEmailService(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient(),
+                resendApiKey,
+                resendFromEmail));
 
         return services;
     }

@@ -74,4 +74,16 @@ public class UserRepository : IUserRepository
         cmd.Parameters.AddWithValue("@userId", userId);
         await cmd.ExecuteNonQueryAsync();
     }
+
+    public async Task UpdatePasswordAsync(string userId, string newPasswordHash)
+    {
+        const string sql = "UPDATE users SET password_hash = @hash WHERE user_id = @userId";
+
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@hash", newPasswordHash);
+        cmd.Parameters.AddWithValue("@userId", userId);
+        await cmd.ExecuteNonQueryAsync();
+    }
 }

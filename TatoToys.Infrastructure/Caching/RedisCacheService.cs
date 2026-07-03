@@ -29,4 +29,23 @@ public class RedisCacheService : IRedisCacheService
         var db = _multiplexer.GetDatabase();
         await db.KeyDeleteAsync($"refresh:{token}");
     }
+
+    public async Task SetResetTokenAsync(string key, string userId, TimeSpan ttl)
+    {
+        var db = _multiplexer.GetDatabase();
+        await db.StringSetAsync(key, userId, ttl);
+    }
+
+    public async Task<string?> GetResetTokenUserIdAsync(string key)
+    {
+        var db = _multiplexer.GetDatabase();
+        var value = await db.StringGetAsync(key);
+        return value.HasValue ? value.ToString() : null;
+    }
+
+    public async Task InvalidateResetTokenAsync(string key)
+    {
+        var db = _multiplexer.GetDatabase();
+        await db.KeyDeleteAsync(key);
+    }
 }

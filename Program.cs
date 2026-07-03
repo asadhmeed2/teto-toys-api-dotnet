@@ -26,7 +26,7 @@ builder.Services.AddCors(options =>
 });
 
 // Clean Architecture: register Application and Infrastructure layers
-builder.Services.AddApplication();
+builder.Services.AddApplication(builder.Configuration);
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
@@ -41,5 +41,6 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 app.MapAuthEndpoints();
+app.MapPasswordResetEndpoints();
 
 app.Run();
