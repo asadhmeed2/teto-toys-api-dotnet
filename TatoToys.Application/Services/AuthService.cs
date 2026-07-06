@@ -42,8 +42,8 @@ public class AuthService : IAuthService
 
             await _userRepository.UpdateLastLoginAsync(user.UserId);
 
-            string accessToken = _tokenService.GenerateAccessToken(user.Email, secret, 15);
-            string refreshToken = _tokenService.GenerateRefreshToken(user.Email, secret, 7 * 24 * 60);
+            string accessToken = _tokenService.GenerateAccessToken(user.UserId, secret, 15);
+            string refreshToken = _tokenService.GenerateRefreshToken(user.UserId, secret, 7 * 24 * 60);
 
             await _redisService.SetRefreshTokenAsync(refreshToken, TimeSpan.FromDays(7));
 
@@ -63,12 +63,12 @@ public class AuthService : IAuthService
 
         await _redisService.InvalidateRefreshTokenAsync(refreshToken);
 
-        string? email = _tokenService.GetEmailFromToken(refreshToken);
-        if (string.IsNullOrEmpty(email))
+        string? userId = _tokenService.GetUserIdFromToken(refreshToken);
+        if (string.IsNullOrEmpty(userId))
             return (false, null, null, "invalid_token", "Malformed refresh token.", 401);
 
-        string newAccessToken = _tokenService.GenerateAccessToken(email, secret, 15);
-        string newRefreshToken = _tokenService.GenerateRefreshToken(email, secret, 7 * 24 * 60);
+        string newAccessToken = _tokenService.GenerateAccessToken(userId, secret, 15);
+        string newRefreshToken = _tokenService.GenerateRefreshToken(userId, secret, 7 * 24 * 60);
         
         await _redisService.SetRefreshTokenAsync(newRefreshToken, TimeSpan.FromDays(7));
 
