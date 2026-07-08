@@ -72,8 +72,8 @@ public static class ProductEndpoints
                         title = reader.GetString(reader.GetOrdinal("title")),
                         subtitle = reader.IsDBNull(reader.GetOrdinal("subtitle")) ? null : reader.GetString(reader.GetOrdinal("subtitle")),
                         description = reader.IsDBNull(reader.GetOrdinal("description")) ? null : reader.GetString(reader.GetOrdinal("description")),
-                        category = reader.GetString(reader.GetOrdinal("category")),
-                        subcategory = reader.IsDBNull(reader.GetOrdinal("subcategory")) ? null : reader.GetString(reader.GetOrdinal("subcategory")),
+                        category = reader.GetInt32(reader.GetOrdinal("category")),
+                        subcategory = reader.IsDBNull(reader.GetOrdinal("subcategory")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("subcategory")),
                         price = reader.GetDecimal(reader.GetOrdinal("price")),
                         image_urls = reader.IsDBNull(reader.GetOrdinal("image_urls")) 
                             ? new List<string>() 
