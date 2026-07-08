@@ -171,6 +171,35 @@ public static class ProductEndpoints
                 total_pages = totalPages
             });
         });
+
+        // ponytail: GET /api/categories (public endpoint for storefront lookup)
+        group.MapGet("/categories", async (HttpContext context) =>
+        {
+            var config = context.RequestServices.GetRequiredService<IConfiguration>();
+            var connectionString = GetConnectionString(config);
+
+            await using var conn = new MySqlConnection(connectionString);
+            await conn.OpenAsync();
+
+            var itemsSql = "SELECT id, name, slug FROM categories ORDER BY name ASC";
+            var items = new List<object>();
+
+            await using (var cmd = new MySqlCommand(itemsSql, conn))
+            {
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    items.Add(new
+                    {
+                        id = reader.GetInt32(reader.GetOrdinal("id")),
+                        name = reader.GetString(reader.GetOrdinal("name")),
+                        slug = reader.GetString(reader.GetOrdinal("slug"))
+                    });
+                }
+            }
+
+            return Results.Ok(items);
+        });
     }
 
     private static string GetConnectionString(IConfiguration config)
