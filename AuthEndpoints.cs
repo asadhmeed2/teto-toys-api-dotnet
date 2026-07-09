@@ -18,17 +18,11 @@ public static class AuthEndpoints
 
         group.MapPost("/login", async (LoginRequest request, HttpContext context) =>
         {
-            var config = context.RequestServices.GetRequiredService<IConfiguration>();
-            var secret = config["JWT:Secret"];
-
-            if (string.IsNullOrEmpty(secret))
-            {
-                Console.Error.WriteLine("JWT Secret is not configured.");
-                return Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500);
-            }
+            var (secret, errorResult) = GetSecret(context);
+            if (errorResult != null) return errorResult;
 
             var authService = context.RequestServices.GetRequiredService<IAuthService>();
-            var result = await authService.LoginAsync(request, secret);
+            var result = await authService.LoginAsync(request, secret!);
 
             if (!result.Success)
             {
@@ -42,19 +36,13 @@ public static class AuthEndpoints
 
         group.MapPost("/refresh", async (HttpContext context) =>
         {
-            var config = context.RequestServices.GetRequiredService<IConfiguration>();
-            var secret = config["JWT:Secret"];
-
-            if (string.IsNullOrEmpty(secret))
-            {
-                Console.Error.WriteLine("JWT Secret is not configured.");
-                return Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500);
-            }
+            var (secret, errorResult) = GetSecret(context);
+            if (errorResult != null) return errorResult;
 
             var refreshToken = context.Request.Cookies[RefreshCookieName];
             
             var authService = context.RequestServices.GetRequiredService<IAuthService>();
-            var result = await authService.RefreshTokenAsync(refreshToken ?? "", secret);
+            var result = await authService.RefreshTokenAsync(refreshToken ?? "", secret!);
 
             if (!result.Success)
             {
@@ -79,14 +67,8 @@ public static class AuthEndpoints
 
         group.MapGet("/me", async (HttpContext context) =>
         {
-            var config = context.RequestServices.GetRequiredService<IConfiguration>();
-            var secret = config["JWT:Secret"];
-
-            if (string.IsNullOrEmpty(secret))
-            {
-                Console.Error.WriteLine("JWT Secret is not configured.");
-                return Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500);
-            }
+            var (secret, errorResult) = GetSecret(context);
+            if (errorResult != null) return errorResult;
 
             var authHeader = context.Request.Headers["Authorization"].ToString();
             if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
@@ -97,7 +79,7 @@ public static class AuthEndpoints
             var token = authHeader["Bearer ".Length..].Trim();
 
             var authService = context.RequestServices.GetRequiredService<IAuthService>();
-            var result = await authService.GetCurrentUserAsync(token, secret);
+            var result = await authService.GetCurrentUserAsync(token, secret!);
 
             if (!result.Success)
             {
@@ -119,6 +101,18 @@ public static class AuthEndpoints
 
             return Results.Json(result.Response, statusCode: result.StatusCode);
         });
+    }
+
+    private static (string? Secret, IResult? ErrorResult) GetSecret(HttpContext context)
+    {
+        var config = context.RequestServices.GetRequiredService<IConfiguration>();
+        var secret = config["JWT:Secret"];
+        if (string.IsNullOrEmpty(secret))
+        {
+            Console.Error.WriteLine("JWT Secret is not configured.");
+            return (null, Results.Json(new { error = "server_error", error_description = "An internal error occurred." }, statusCode: 500));
+        }
+        return (secret, null);
     }
 
     private static void SetRefreshCookie(HttpContext context, string token)
