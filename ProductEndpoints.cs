@@ -14,7 +14,7 @@ public static class ProductEndpoints
         var group = app.MapGroup("/api");
 
         // ponytail: GET /api/products (public endpoint for storefront)
-        group.MapGet("/products", async (HttpContext context, int? page, int? pageSize, string? search) =>
+        group.MapGet("/products", async (HttpContext context, int? page, int? pageSize, string? search, string? category) =>
         {
             var config = context.RequestServices.GetRequiredService<IConfiguration>();
             var connectionString = GetConnectionString(config);
@@ -29,8 +29,14 @@ public static class ProductEndpoints
             await using var conn = new MySqlConnection(connectionString);
             await conn.OpenAsync();
 
+            bool filterByCategory = !string.IsNullOrEmpty(category) && !category.Equals("All", StringComparison.OrdinalIgnoreCase) && int.TryParse(category, out _);
+
             // 1. Get total count
             var countSql = "SELECT COUNT(1) FROM products WHERE is_deleted = 0 AND is_displayed = 1";
+            if (filterByCategory)
+            {
+                countSql += " AND category = @categoryId";
+            }
             if (!string.IsNullOrEmpty(search))
             {
                 countSql += " AND (title LIKE @search OR description LIKE @search)";
@@ -38,6 +44,10 @@ public static class ProductEndpoints
             int totalCount = 0;
             await using (var countCmd = new MySqlCommand(countSql, conn))
             {
+                if (filterByCategory)
+                {
+                    countCmd.Parameters.AddWithValue("@categoryId", int.Parse(category!));
+                }
                 if (!string.IsNullOrEmpty(search))
                 {
                     countCmd.Parameters.AddWithValue("@search", $"%{search}%");
@@ -47,6 +57,10 @@ public static class ProductEndpoints
 
             // 2. Get items
             var itemsSql = "SELECT product_id, title, subtitle, description, category, subcategory, price, image_urls FROM products WHERE is_deleted = 0 AND is_displayed = 1";
+            if (filterByCategory)
+            {
+                itemsSql += " AND category = @categoryId";
+            }
             if (!string.IsNullOrEmpty(search))
             {
                 itemsSql += " AND (title LIKE @search OR description LIKE @search)";
@@ -56,6 +70,10 @@ public static class ProductEndpoints
             var items = new List<object>();
             await using (var itemsCmd = new MySqlCommand(itemsSql, conn))
             {
+                if (filterByCategory)
+                {
+                    itemsCmd.Parameters.AddWithValue("@categoryId", int.Parse(category!));
+                }
                 if (!string.IsNullOrEmpty(search))
                 {
                     itemsCmd.Parameters.AddWithValue("@search", $"%{search}%");
