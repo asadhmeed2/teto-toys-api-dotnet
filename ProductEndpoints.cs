@@ -30,10 +30,10 @@ public static class ProductEndpoints
             await conn.OpenAsync();
 
             // 1. Get total count
-            var countSql = "SELECT COUNT(1) FROM products";
+            var countSql = "SELECT COUNT(1) FROM products WHERE is_deleted = 0 AND is_displayed = 1";
             if (!string.IsNullOrEmpty(search))
             {
-                countSql += " WHERE title LIKE @search OR description LIKE @search";
+                countSql += " AND (title LIKE @search OR description LIKE @search)";
             }
             int totalCount = 0;
             await using (var countCmd = new MySqlCommand(countSql, conn))
@@ -46,10 +46,10 @@ public static class ProductEndpoints
             }
 
             // 2. Get items
-            var itemsSql = "SELECT product_id, title, subtitle, description, category, subcategory, price, image_urls FROM products";
+            var itemsSql = "SELECT product_id, title, subtitle, description, category, subcategory, price, image_urls FROM products WHERE is_deleted = 0 AND is_displayed = 1";
             if (!string.IsNullOrEmpty(search))
             {
-                itemsSql += " WHERE title LIKE @search OR description LIKE @search";
+                itemsSql += " AND (title LIKE @search OR description LIKE @search)";
             }
             itemsSql += " ORDER BY created_at DESC LIMIT @limit OFFSET @offset";
 
