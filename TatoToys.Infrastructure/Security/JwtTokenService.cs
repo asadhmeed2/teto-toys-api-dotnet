@@ -21,7 +21,12 @@ public class JwtTokenService : ITokenService
         return GenerateTokenInternal(userId, secretKey, expireMinutes, "refresh");
     }
 
-    private string GenerateTokenInternal(string userId, string secretKey, int expireMinutes, string tokenType)
+    public string GenerateRefreshToken(string userId, string firstName, string lastName, string secretKey, int expireMinutes)
+    {
+        return GenerateTokenInternal(userId, secretKey, expireMinutes, "refresh", firstName, lastName);
+    }
+
+    private string GenerateTokenInternal(string userId, string secretKey, int expireMinutes, string tokenType, string? firstName = null, string? lastName = null)
     {
         var tokenHandler = new JwtSecurityTokenHandler();
         var key = Encoding.UTF8.GetBytes(secretKey);
@@ -36,6 +41,16 @@ public class JwtTokenService : ITokenService
         if (tokenType == "refresh")
         {
             claims.Add(new Claim("token_type", "refresh"));
+        }
+
+        if (!string.IsNullOrEmpty(firstName))
+        {
+            claims.Add(new Claim(ClaimTypes.GivenName, firstName));
+        }
+
+        if (!string.IsNullOrEmpty(lastName))
+        {
+            claims.Add(new Claim(ClaimTypes.Surname, lastName));
         }
 
         var tokenDescriptor = new SecurityTokenDescriptor
@@ -90,8 +105,10 @@ public class JwtTokenService : ITokenService
             var jwt = (JwtSecurityToken)validatedToken;
             var userId = jwt.Claims.First(c => c.Type == JwtRegisteredClaimNames.Sub).Value;
             var role = jwt.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value ?? "User";
+            var firstName = jwt.Claims.FirstOrDefault(c => c.Type == ClaimTypes.GivenName)?.Value ?? string.Empty;
+            var lastName = jwt.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Surname)?.Value ?? string.Empty;
 
-            return new { userId, role };
+            return new { userId, role, firstName, lastName };
         }
         catch
         {

@@ -35,6 +35,30 @@ public class UserRepository : IUserRepository
         };
     }
 
+    public async Task<User?> GetByIdAsync(string userId)
+    {
+        const string sql = "SELECT user_id, email, password_hash, is_active, first_name, last_name FROM TetoToys.users WHERE user_id = @userId";
+
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.Add("@userId", MySqlDbType.VarChar).Value = userId;
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+            return null;
+
+        return new User
+        {
+            UserId = reader.GetGuid(reader.GetOrdinal("user_id")).ToString(),
+            Email = reader.GetString(reader.GetOrdinal("email")),
+            PasswordHash = reader.GetString(reader.GetOrdinal("password_hash")),
+            IsActive = reader.GetBoolean(reader.GetOrdinal("is_active")),
+            FirstName = reader.GetString(reader.GetOrdinal("first_name")),
+            LastName = reader.GetString(reader.GetOrdinal("last_name"))
+        };
+    }
+
     public async Task CreateUserAsync(
         string userId, string email, string passwordHash,
         string firstName, string lastName, bool isAdult,

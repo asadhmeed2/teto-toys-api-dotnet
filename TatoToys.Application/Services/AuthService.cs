@@ -43,7 +43,7 @@ public class AuthService : IAuthService
             await _userRepository.UpdateLastLoginAsync(user.UserId);
 
             string accessToken = _tokenService.GenerateAccessToken(user.UserId, secret, 15);
-            string refreshToken = _tokenService.GenerateRefreshToken(user.UserId, secret, 7 * 24 * 60);
+            string refreshToken = _tokenService.GenerateRefreshToken(user.UserId, user.FirstName, user.LastName, secret, 7 * 24 * 60);
 
             await _redisService.SetRefreshTokenAsync(refreshToken, TimeSpan.FromDays(7));
 
@@ -67,8 +67,12 @@ public class AuthService : IAuthService
         if (string.IsNullOrEmpty(userId))
             return (false, null, null, "invalid_token", "Malformed refresh token.", 401);
 
+        var user = await _userRepository.GetByIdAsync(userId);
+        if (user == null || !user.IsActive)
+            return (false, null, null, "invalid_grant", "Account is inactive or deleted.", 401);
+
         string newAccessToken = _tokenService.GenerateAccessToken(userId, secret, 15);
-        string newRefreshToken = _tokenService.GenerateRefreshToken(userId, secret, 7 * 24 * 60);
+        string newRefreshToken = _tokenService.GenerateRefreshToken(userId, user.FirstName, user.LastName, secret, 7 * 24 * 60);
         
         await _redisService.SetRefreshTokenAsync(newRefreshToken, TimeSpan.FromDays(7));
 
@@ -81,7 +85,11 @@ public class AuthService : IAuthService
         if (userInfo == null)
             return (false, null, "unauthorized", "Token is invalid or expired.", 401);
 
-        return (true, userInfo, null, null, 200);
+        var userId = userInfo.GetType().GetProperty("userId")?.GetValue(userInfo)?.ToString();
+        var role = userInfo.GetType().GetProperty("role")?.GetValue(userInfo)?.ToString();
+        var user = !string.IsNullOrEmpty(userId) ? await _userRepository.GetByIdAsync(userId) : null;
+
+        return (true, new { userId, role, firstName = user?.FirstName, lastName = user?.LastName }, null, null, 200);
     }
 
     public async Task<(bool Success, object? Response, string? Error, string? ErrorDescription, int StatusCode)> RegisterAsync(RegisterRequest request)
