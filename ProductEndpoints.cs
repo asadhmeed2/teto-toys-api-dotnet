@@ -199,7 +199,7 @@ public static class ProductEndpoints
             await using var conn = new MySqlConnection(connectionString);
             await conn.OpenAsync();
 
-            var itemsSql = "SELECT id, name, slug FROM categories ORDER BY name ASC";
+            var itemsSql = "SELECT id, name, slug FROM categories WHERE number_of_active_products > 0 ORDER BY name ASC";
             var items = new List<object>();
 
             await using (var cmd = new MySqlCommand(itemsSql, conn))
