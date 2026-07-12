@@ -49,8 +49,6 @@ public static class AuthEndpoints
                 return Results.Json(new { error = result.Error, error_description = result.ErrorDescription }, statusCode: result.StatusCode);
             }
 
-            SetRefreshCookie(context, result.RefreshToken!);
-
             return Results.Ok(result.Response);
         });
 

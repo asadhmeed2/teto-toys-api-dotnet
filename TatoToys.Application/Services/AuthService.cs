@@ -61,22 +61,13 @@ public class AuthService : IAuthService
         if (string.IsNullOrEmpty(refreshToken) || !await _redisService.ValidateRefreshTokenAsync(refreshToken))
             return (false, null, null, "invalid_token", "Missing or invalid refresh token.", 401);
 
-        await _redisService.InvalidateRefreshTokenAsync(refreshToken);
-
         string? userId = _tokenService.GetUserIdFromToken(refreshToken);
         if (string.IsNullOrEmpty(userId))
             return (false, null, null, "invalid_token", "Malformed refresh token.", 401);
 
-        var user = await _userRepository.GetByIdAsync(userId);
-        if (user == null || !user.IsActive)
-            return (false, null, null, "invalid_grant", "Account is inactive or deleted.", 401);
-
         string newAccessToken = _tokenService.GenerateAccessToken(userId, secret, 15);
-        string newRefreshToken = _tokenService.GenerateRefreshToken(userId, user.FirstName, user.LastName, secret, 7 * 24 * 60);
-        
-        await _redisService.SetRefreshTokenAsync(newRefreshToken, TimeSpan.FromDays(7));
 
-        return (true, new LoginResponse(newAccessToken, "Bearer", 900), newRefreshToken, null, null, 200);
+        return (true, new LoginResponse(newAccessToken, "Bearer", 900), null, null, null, 200);
     }
 
     public async Task<(bool Success, object? UserInfo, string? Error, string? ErrorDescription, int StatusCode)> GetCurrentUserAsync(string token, string secret)
