@@ -82,7 +82,7 @@ public static class FavoritesEndpoints
             return Results.Ok(new { ids });
         });
 
-        // POST /api/favorites/{productId} — add a product to favourites
+        // POST /api/favorites/{productId} — add a product to favorites
         group.MapPost("/{productId}", async (string productId, HttpContext context) =>
         {
             var userId = ExtractUserId(context);
@@ -113,7 +113,7 @@ public static class FavoritesEndpoints
             return Results.Ok(new { product_id = productId, is_favorite = true });
         });
 
-        // DELETE /api/favorites/{productId} — remove a product from favourites
+        // DELETE /api/favorites/{productId} — remove a product from favorites
         group.MapDelete("/{productId}", async (string productId, HttpContext context) =>
         {
             var userId = ExtractUserId(context);
