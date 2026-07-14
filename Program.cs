@@ -43,5 +43,6 @@ app.UseHttpsRedirection();
 app.MapAuthEndpoints();
 app.MapPasswordResetEndpoints();
 app.MapProductEndpoints();
+app.MapFavoritesEndpoints();
 
 app.Run();
