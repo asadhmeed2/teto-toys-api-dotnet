@@ -21,12 +21,12 @@ public class JwtTokenService : ITokenService
         return GenerateTokenInternal(userId, secretKey, expireMinutes, "refresh");
     }
 
-    public string GenerateRefreshToken(string userId, string firstName, string lastName, string secretKey, int expireMinutes)
+    public string GenerateRefreshToken(string userId, string firstName, string lastName, string secretKey, int expireMinutes, string? timezone = null)
     {
-        return GenerateTokenInternal(userId, secretKey, expireMinutes, "refresh", firstName, lastName);
+        return GenerateTokenInternal(userId, secretKey, expireMinutes, "refresh", firstName, lastName, timezone);
     }
 
-    private string GenerateTokenInternal(string userId, string secretKey, int expireMinutes, string tokenType, string? firstName = null, string? lastName = null)
+    private string GenerateTokenInternal(string userId, string secretKey, int expireMinutes, string tokenType, string? firstName = null, string? lastName = null, string? timezone = null)
     {
         var tokenHandler = new JwtSecurityTokenHandler();
         var key = Encoding.UTF8.GetBytes(secretKey);
@@ -51,6 +51,11 @@ public class JwtTokenService : ITokenService
         if (!string.IsNullOrEmpty(lastName))
         {
             claims.Add(new Claim(ClaimTypes.Surname, lastName));
+        }
+
+        if (tokenType == "refresh" && !string.IsNullOrEmpty(timezone))
+        {
+            claims.Add(new Claim("timezone", timezone));
         }
 
         var tokenDescriptor = new SecurityTokenDescriptor

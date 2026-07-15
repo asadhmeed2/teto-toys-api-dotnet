@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace TatoToys.Application.DTOs;
 
-public record LoginRequest(string Email, string Password);
+public record LoginRequest(string Email, string Password, string? Timezone = null);
 
 public record LoginResponse(
     [property: JsonPropertyName("access_token")] string AccessToken,

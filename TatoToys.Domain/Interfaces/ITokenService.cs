@@ -4,7 +4,7 @@ public interface ITokenService
 {
     string GenerateAccessToken(string userId, string secretKey, int expireMinutes);
     string GenerateRefreshToken(string userId, string secretKey, int expireMinutes);
-    string GenerateRefreshToken(string userId, string firstName, string lastName, string secretKey, int expireMinutes);
+    string GenerateRefreshToken(string userId, string firstName, string lastName, string secretKey, int expireMinutes, string? timezone = null);
     string? GetUserIdFromToken(string token);
     object? ValidateAndGetUserInfo(string token, string secretKey);
 }
