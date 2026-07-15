@@ -55,17 +55,22 @@ public static class ProductEndpoints
                 totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
             }
 
-            // 2. Get items
-            var itemsSql = "SELECT product_id, title, subtitle, description, category, subcategory, price, image_urls FROM products WHERE is_deleted = 0 AND is_displayed = 1";
+            // 2. Get items (LEFT JOIN product_parts so each product carries its associated part_ids)
+            var itemsSql = @"
+                SELECT p.product_id, p.title, p.subtitle, p.description, p.category, p.subcategory, p.price, p.image_urls,
+                       GROUP_CONCAT(pp.part_id) AS part_ids
+                FROM products p
+                LEFT JOIN product_parts pp ON pp.product_id = p.product_id
+                WHERE p.is_deleted = 0 AND p.is_displayed = 1";
             if (filterByCategory)
             {
-                itemsSql += " AND category = @categoryId";
+                itemsSql += " AND p.category = @categoryId";
             }
             if (!string.IsNullOrEmpty(search))
             {
-                itemsSql += " AND (title LIKE @search OR description LIKE @search)";
+                itemsSql += " AND (p.title LIKE @search OR p.description LIKE @search)";
             }
-            itemsSql += " ORDER BY created_at DESC LIMIT @limit OFFSET @offset";
+            itemsSql += " GROUP BY p.product_id ORDER BY p.created_at DESC LIMIT @limit OFFSET @offset";
 
             var items = new List<object>();
             await using (var itemsCmd = new MySqlCommand(itemsSql, conn))
@@ -93,9 +98,12 @@ public static class ProductEndpoints
                         category = reader.GetInt32(reader.GetOrdinal("category")),
                         subcategory = reader.IsDBNull(reader.GetOrdinal("subcategory")) ? (int?)null : reader.GetInt32(reader.GetOrdinal("subcategory")),
                         price = reader.GetDecimal(reader.GetOrdinal("price")),
-                        image_urls = reader.IsDBNull(reader.GetOrdinal("image_urls")) 
-                            ? new List<string>() 
-                            : System.Text.Json.JsonSerializer.Deserialize<List<string>>(reader.GetString(reader.GetOrdinal("image_urls"))) ?? new List<string>()
+                        image_urls = reader.IsDBNull(reader.GetOrdinal("image_urls"))
+                            ? new List<string>()
+                            : System.Text.Json.JsonSerializer.Deserialize<List<string>>(reader.GetString(reader.GetOrdinal("image_urls"))) ?? new List<string>(),
+                        part_ids = reader.IsDBNull(reader.GetOrdinal("part_ids"))
+                            ? new List<string>()
+                            : new List<string>(reader.GetString(reader.GetOrdinal("part_ids")).Split(','))
                     });
                 }
             }
