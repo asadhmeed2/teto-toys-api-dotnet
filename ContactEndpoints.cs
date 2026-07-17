@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using MySql.Data.MySqlClient;
+using System.Net;
 using System.Text.Json.Serialization;
 
 public static class ContactEndpoints
@@ -31,11 +32,14 @@ public static class ContactEndpoints
                 INSERT INTO contact_messages (name, email, subject, message)
                 VALUES (@name, @email, @subject, @message)";
 
+            // ponytail: HTML-encode free-text fields so a submitted <script> tag is stored
+            // as inert text, protecting any future consumer (admin UI, email digest, etc.)
+            // that renders these values, regardless of whether that consumer remembers to encode.
             await using var cmd = new MySqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@name", body.Name.Trim());
-            cmd.Parameters.AddWithValue("@email", body.Email.Trim());
-            cmd.Parameters.AddWithValue("@subject", string.IsNullOrWhiteSpace(body.Subject) ? (object)DBNull.Value : body.Subject.Trim());
-            cmd.Parameters.AddWithValue("@message", body.Message.Trim());
+            cmd.Parameters.AddWithValue("@name", WebUtility.HtmlEncode(body.Name.Trim()));
+            cmd.Parameters.AddWithValue("@email", WebUtility.HtmlEncode(body.Email.Trim()));
+            cmd.Parameters.AddWithValue("@subject", string.IsNullOrWhiteSpace(body.Subject) ? (object)DBNull.Value : WebUtility.HtmlEncode(body.Subject.Trim()));
+            cmd.Parameters.AddWithValue("@message", WebUtility.HtmlEncode(body.Message.Trim()));
             await cmd.ExecuteNonQueryAsync();
 
             return Results.Created("/api/contact", new
