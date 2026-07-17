@@ -31,6 +31,9 @@ builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
 
+// Run database table creation on startup (idempotent — safe to call every boot)
+await app.Services.GetRequiredService<TatoToys.Infrastructure.Data.DatabaseInitializer>().InitializeAsync();
+
 app.UseCors("AllowAngular");
 
 if (app.Environment.IsDevelopment())
@@ -44,5 +47,6 @@ app.MapAuthEndpoints();
 app.MapPasswordResetEndpoints();
 app.MapProductEndpoints();
 app.MapFavoritesEndpoints();
+app.MapContactEndpoints();
 
 app.Run();
