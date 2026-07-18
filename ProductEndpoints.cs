@@ -14,7 +14,7 @@ public static class ProductEndpoints
         var group = app.MapGroup("/api");
 
         // ponytail: GET /api/products (public endpoint for storefront)
-        group.MapGet("/products", async (HttpContext context, int? page, int? pageSize, string? search, string? category) =>
+        group.MapGet("/products", async (HttpContext context, int? page, int? pageSize, string? search, string? category, string? lang) =>
         {
             var config = context.RequestServices.GetRequiredService<IConfiguration>();
             var connectionString = GetConnectionString(config);
@@ -23,6 +23,7 @@ public static class ProductEndpoints
             int pageSizeVal = pageSize ?? 10;
             if (pageVal < 1) pageVal = 1;
             if (pageSizeVal < 1 || pageSizeVal > 100) pageSizeVal = 10;
+            string langVal = string.IsNullOrEmpty(lang) ? "en" : lang;
 
             int offset = (pageVal - 1) * pageSizeVal;
 
@@ -31,19 +32,25 @@ public static class ProductEndpoints
 
             bool filterByCategory = !string.IsNullOrEmpty(category) && !category.Equals("All", StringComparison.OrdinalIgnoreCase) && int.TryParse(category, out _);
 
-            // 1. Get total count
-            var countSql = "SELECT COUNT(1) FROM products WHERE is_deleted = 0 AND is_displayed = 1";
+            // 1. Get total count (same translation joins as the items query — the
+            // search filter matches translated text, so the count must resolve it too)
+            var countSql = @"
+                SELECT COUNT(1) FROM products p
+                LEFT JOIN product_translations req ON req.product_id = p.product_id AND req.language_code = @language
+                LEFT JOIN product_translations fb ON fb.product_id = p.product_id AND fb.language_code = 'en'
+                WHERE p.is_deleted = 0 AND p.is_displayed = 1";
             if (filterByCategory)
             {
-                countSql += " AND category = @categoryId";
+                countSql += " AND p.category = @categoryId";
             }
             if (!string.IsNullOrEmpty(search))
             {
-                countSql += " AND (title LIKE @search OR description LIKE @search)";
+                countSql += " AND (COALESCE(req.title, fb.title) LIKE @search OR COALESCE(req.description, fb.description) LIKE @search)";
             }
             int totalCount = 0;
             await using (var countCmd = new MySqlCommand(countSql, conn))
             {
+                countCmd.Parameters.AddWithValue("@language", langVal);
                 if (filterByCategory)
                 {
                     countCmd.Parameters.AddWithValue("@categoryId", int.Parse(category!));
@@ -55,12 +62,19 @@ public static class ProductEndpoints
                 totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
             }
 
-            // 2. Get items (LEFT JOIN product_parts so each product carries its associated part_ids)
+            // 2. Get items (LEFT JOIN product_parts so each product carries its associated part_ids;
+            // double LEFT JOIN product_translations resolves requested-language text with an 'en' fallback)
             var itemsSql = @"
-                SELECT p.product_id, p.title, p.subtitle, p.description, p.category, p.subcategory, p.price, p.image_urls,
+                SELECT p.product_id,
+                       COALESCE(req.title, fb.title) AS title,
+                       COALESCE(req.subtitle, fb.subtitle) AS subtitle,
+                       COALESCE(req.description, fb.description) AS description,
+                       p.category, p.subcategory, p.price, p.image_urls,
                        GROUP_CONCAT(pp.part_id) AS part_ids
                 FROM products p
                 LEFT JOIN product_parts pp ON pp.product_id = p.product_id
+                LEFT JOIN product_translations req ON req.product_id = p.product_id AND req.language_code = @language
+                LEFT JOIN product_translations fb ON fb.product_id = p.product_id AND fb.language_code = 'en'
                 WHERE p.is_deleted = 0 AND p.is_displayed = 1";
             if (filterByCategory)
             {
@@ -68,13 +82,14 @@ public static class ProductEndpoints
             }
             if (!string.IsNullOrEmpty(search))
             {
-                itemsSql += " AND (p.title LIKE @search OR p.description LIKE @search)";
+                itemsSql += " AND (COALESCE(req.title, fb.title) LIKE @search OR COALESCE(req.description, fb.description) LIKE @search)";
             }
             itemsSql += " GROUP BY p.product_id ORDER BY p.created_at DESC LIMIT @limit OFFSET @offset";
 
             var items = new List<object>();
             await using (var itemsCmd = new MySqlCommand(itemsSql, conn))
             {
+                itemsCmd.Parameters.AddWithValue("@language", langVal);
                 if (filterByCategory)
                 {
                     itemsCmd.Parameters.AddWithValue("@categoryId", int.Parse(category!));
@@ -121,7 +136,7 @@ public static class ProductEndpoints
         });
 
         // ponytail: GET /api/parts (public endpoint for storefront)
-        group.MapGet("/parts", async (HttpContext context, int? page, int? pageSize, string? search) =>
+        group.MapGet("/parts", async (HttpContext context, int? page, int? pageSize, string? search, string? lang) =>
         {
             var config = context.RequestServices.GetRequiredService<IConfiguration>();
             var connectionString = GetConnectionString(config);
@@ -130,21 +145,26 @@ public static class ProductEndpoints
             int pageSizeVal = pageSize ?? 10;
             if (pageVal < 1) pageVal = 1;
             if (pageSizeVal < 1 || pageSizeVal > 100) pageSizeVal = 10;
+            string langVal = string.IsNullOrEmpty(lang) ? "en" : lang;
 
             int offset = (pageVal - 1) * pageSizeVal;
 
             await using var conn = new MySqlConnection(connectionString);
             await conn.OpenAsync();
 
-            // 1. Get total count
-            var countSql = "SELECT COUNT(1) FROM parts";
+            // 1. Get total count (same translation joins as the items query)
+            var countSql = @"
+                SELECT COUNT(1) FROM parts pa
+                LEFT JOIN part_translations req ON req.part_id = pa.part_id AND req.language_code = @language
+                LEFT JOIN part_translations fb ON fb.part_id = pa.part_id AND fb.language_code = 'en'";
             if (!string.IsNullOrEmpty(search))
             {
-                countSql += " WHERE title LIKE @search OR description LIKE @search";
+                countSql += " WHERE (COALESCE(req.title, fb.title) LIKE @search OR COALESCE(req.description, fb.description) LIKE @search)";
             }
             int totalCount = 0;
             await using (var countCmd = new MySqlCommand(countSql, conn))
             {
+                countCmd.Parameters.AddWithValue("@language", langVal);
                 if (!string.IsNullOrEmpty(search))
                 {
                     countCmd.Parameters.AddWithValue("@search", $"%{search}%");
@@ -152,17 +172,25 @@ public static class ProductEndpoints
                 totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
             }
 
-            // 2. Get items
-            var itemsSql = "SELECT part_id, title, description, price, image_urls FROM parts";
+            // 2. Get items (double LEFT JOIN part_translations resolves requested-language text with an 'en' fallback)
+            var itemsSql = @"
+                SELECT pa.part_id,
+                       COALESCE(req.title, fb.title) AS title,
+                       COALESCE(req.description, fb.description) AS description,
+                       pa.price, pa.image_urls
+                FROM parts pa
+                LEFT JOIN part_translations req ON req.part_id = pa.part_id AND req.language_code = @language
+                LEFT JOIN part_translations fb ON fb.part_id = pa.part_id AND fb.language_code = 'en'";
             if (!string.IsNullOrEmpty(search))
             {
-                itemsSql += " WHERE title LIKE @search OR description LIKE @search";
+                itemsSql += " WHERE (COALESCE(req.title, fb.title) LIKE @search OR COALESCE(req.description, fb.description) LIKE @search)";
             }
-            itemsSql += " ORDER BY created_at DESC LIMIT @limit OFFSET @offset";
+            itemsSql += " ORDER BY pa.created_at DESC LIMIT @limit OFFSET @offset";
 
             var items = new List<object>();
             await using (var itemsCmd = new MySqlCommand(itemsSql, conn))
             {
+                itemsCmd.Parameters.AddWithValue("@language", langVal);
                 if (!string.IsNullOrEmpty(search))
                 {
                     itemsCmd.Parameters.AddWithValue("@search", $"%{search}%");
@@ -179,8 +207,8 @@ public static class ProductEndpoints
                         title = reader.GetString(reader.GetOrdinal("title")),
                         description = reader.IsDBNull(reader.GetOrdinal("description")) ? null : reader.GetString(reader.GetOrdinal("description")),
                         price = reader.GetDecimal(reader.GetOrdinal("price")),
-                        image_urls = reader.IsDBNull(reader.GetOrdinal("image_urls")) 
-                            ? new List<string>() 
+                        image_urls = reader.IsDBNull(reader.GetOrdinal("image_urls"))
+                            ? new List<string>()
                             : System.Text.Json.JsonSerializer.Deserialize<List<string>>(reader.GetString(reader.GetOrdinal("image_urls"))) ?? new List<string>()
                     });
                 }
@@ -199,19 +227,27 @@ public static class ProductEndpoints
         });
 
         // ponytail: GET /api/categories (public endpoint for storefront lookup)
-        group.MapGet("/categories", async (HttpContext context) =>
+        group.MapGet("/categories", async (HttpContext context, string? lang) =>
         {
             var config = context.RequestServices.GetRequiredService<IConfiguration>();
             var connectionString = GetConnectionString(config);
+            string langVal = string.IsNullOrEmpty(lang) ? "en" : lang;
 
             await using var conn = new MySqlConnection(connectionString);
             await conn.OpenAsync();
 
-            var itemsSql = "SELECT id, name, slug FROM categories WHERE number_of_active_products > 0 ORDER BY name ASC";
+            var itemsSql = @"
+                SELECT c.id, COALESCE(req.name, fb.name) AS name, c.slug
+                FROM categories c
+                LEFT JOIN category_translations req ON req.category_id = c.id AND req.language_code = @language
+                LEFT JOIN category_translations fb ON fb.category_id = c.id AND fb.language_code = 'en'
+                WHERE c.number_of_active_products > 0
+                ORDER BY name ASC";
             var items = new List<object>();
 
             await using (var cmd = new MySqlCommand(itemsSql, conn))
             {
+                cmd.Parameters.AddWithValue("@language", langVal);
                 await using var reader = await cmd.ExecuteReaderAsync();
                 while (await reader.ReadAsync())
                 {
