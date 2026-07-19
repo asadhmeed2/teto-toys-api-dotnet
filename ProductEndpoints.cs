@@ -262,6 +262,33 @@ public static class ProductEndpoints
 
             return Results.Ok(items);
         });
+
+        // ponytail: GET /api/languages (public lookup for the storefront language selector)
+        group.MapGet("/languages", async (HttpContext context) =>
+        {
+            var config = context.RequestServices.GetRequiredService<IConfiguration>();
+            var connectionString = GetConnectionString(config);
+
+            await using var conn = new MySqlConnection(connectionString);
+            await conn.OpenAsync();
+
+            var items = new List<object>();
+            await using (var cmd = new MySqlCommand("SELECT code, name, is_rtl FROM system_languages ORDER BY code ASC", conn))
+            {
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    items.Add(new
+                    {
+                        code = reader.GetString(reader.GetOrdinal("code")),
+                        name = reader.GetString(reader.GetOrdinal("name")),
+                        is_rtl = reader.GetBoolean(reader.GetOrdinal("is_rtl"))
+                    });
+                }
+            }
+
+            return Results.Ok(items);
+        });
     }
 
     private static string GetConnectionString(IConfiguration config)
