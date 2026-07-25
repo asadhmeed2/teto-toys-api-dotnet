@@ -24,6 +24,13 @@ public class RedisCacheService : IRedisCacheService
         return await db.KeyExistsAsync($"refresh:{token}");
     }
 
+    public async Task<string?> GetRefreshTokenAsync(string Id)
+    {
+        var db = _multiplexer.GetDatabase();
+        var value = await db.StringGetAsync($"refresh:{Id}");
+        return value.HasValue ? value.ToString() : null;
+    }
+
     public async Task InvalidateRefreshTokenAsync(string token)
     {
         var db = _multiplexer.GetDatabase();
