@@ -48,5 +48,6 @@ app.MapPasswordResetEndpoints();
 app.MapProductEndpoints();
 app.MapFavoritesEndpoints();
 app.MapContactEndpoints();
+app.MapStoreHoursEndpoints();
 
 app.Run();
