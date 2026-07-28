@@ -45,6 +45,13 @@ RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS final
 WORKDIR /app
 
+# tzdata is REQUIRED: the alpine runtime image ships no IANA timezone database, so
+# TimeZoneInfo.FindSystemTimeZoneById("Asia/Jerusalem") throws and /api/store-hours
+# falls back to UTC — reporting the shop "open" for hours after it closed.
+# icu-libs enables full globalization (culture-aware formatting/collation).
+RUN apk add --no-cache tzdata icu-libs
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+
 # Copy everything needed to run the app from the "build" stage.
 COPY --from=build /app .
 

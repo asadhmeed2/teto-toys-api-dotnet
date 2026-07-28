@@ -68,11 +68,14 @@ public static class StoreHoursEndpoints
             // 3. is_open_now is always computed fresh — never cached, or a stale "true"
             //    could outlive closing time by up to the full TTL.
             var timeZoneId = config["Store:TimeZone"] ?? DefaultTimeZone;
-            var isOpenNow = ComputeIsOpenNow(days, timeZoneId, out var localNow);
+            var isOpenNow = ComputeIsOpenNow(days, timeZoneId, out var localNow, out var timeZoneResolved);
 
             return Results.Ok(new
             {
                 timezone = timeZoneId,
+                // false => the host lacks tzdata and the times below are server-local,
+                // not store-local. Surfaced so this is visible without reading logs.
+                timezone_resolved = timeZoneResolved,
                 server_time = localNow.ToString("yyyy-MM-ddTHH:mm:ss"),
                 is_open_now = isOpenNow,
                 days = days.ConvertAll(d => new
@@ -113,9 +116,9 @@ public static class StoreHoursEndpoints
         return rows;
     }
 
-    private static bool ComputeIsOpenNow(List<StoreHourRow> days, string timeZoneId, out DateTime localNow)
+    private static bool ComputeIsOpenNow(List<StoreHourRow> days, string timeZoneId, out DateTime localNow, out bool timeZoneResolved)
     {
-        localNow = ResolveNow(timeZoneId);
+        localNow = ResolveNow(timeZoneId, out timeZoneResolved);
 
         // .NET DayOfWeek already maps Sunday = 0 .. Saturday = 6.
         var today = (int)localNow.DayOfWeek;
@@ -129,20 +132,25 @@ public static class StoreHoursEndpoints
         return now >= open && now < close;
     }
 
-    private static DateTime ResolveNow(string timeZoneId)
+    private static DateTime ResolveNow(string timeZoneId, out bool resolved)
     {
         try
         {
             var tz = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+            resolved = true;
             return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz);
         }
-        catch (TimeZoneNotFoundException)
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
         {
-            // Container without tzdata — fall back to server local rather than 500.
-            return DateTime.Now;
-        }
-        catch (InvalidTimeZoneException)
-        {
+            // Loud on purpose. Falling back to server local time silently produces a
+            // WRONG open/closed answer whenever the host isn't in the store's zone —
+            // e.g. a UTC container reports "open" for three hours after closing.
+            // Alpine/slim images ship no tzdata: `apk add --no-cache tzdata`.
+            Console.Error.WriteLine(
+                $"[store-hours] Timezone '{timeZoneId}' could not be resolved ({ex.GetType().Name}). " +
+                "Falling back to server local time — open/closed WILL be wrong unless the host " +
+                "runs in that zone. Install tzdata in the runtime image to fix.");
+            resolved = false;
             return DateTime.Now;
         }
     }
