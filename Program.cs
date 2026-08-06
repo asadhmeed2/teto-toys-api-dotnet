@@ -36,6 +36,11 @@ await app.Services.GetRequiredService<TatoToys.Infrastructure.Data.DatabaseIniti
 
 app.UseCors("AllowAngular");
 
+// Before auth and endpoints: rejected traffic should cost as little as possible.
+// Must follow UseCors so 429 responses still carry CORS headers and the browser
+// can read them instead of reporting an opaque network error.
+app.UseRedisRateLimiting();
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
