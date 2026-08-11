@@ -34,6 +34,16 @@ var app = builder.Build();
 // Run database table creation on startup (idempotent — safe to call every boot)
 await app.Services.GetRequiredService<TatoToys.Infrastructure.Data.DatabaseInitializer>().InitializeAsync();
 
+// First in the pipeline so even short-circuited responses (429s, redirects) carry them.
+app.UseSecurityHeaders();
+
+// HSTS tells browsers to refuse plain HTTP for this host. Production only —
+// on localhost it would pin the dev machine to HTTPS and break local work.
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+}
+
 app.UseCors("AllowAngular");
 
 // Before auth and endpoints: rejected traffic should cost as little as possible.
