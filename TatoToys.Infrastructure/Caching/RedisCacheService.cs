@@ -12,10 +12,21 @@ public class RedisCacheService : IRedisCacheService
         _multiplexer = multiplexer;
     }
 
-    public async Task SetRefreshTokenAsync(string token, TimeSpan ttl)
+    public async Task SetRefreshTokenAsync(string token, TimeSpan ttl, string userId)
     {
         var db = _multiplexer.GetDatabase();
         await db.StringSetAsync($"refresh:{token}", "1", ttl);
+        // Per-user index so a password reset can revoke every session. Key shared with node/flask.
+        await db.SetAddAsync($"user_refresh:{userId}", token);
+        await db.KeyExpireAsync($"user_refresh:{userId}", ttl);
+    }
+
+    public async Task InvalidateUserRefreshTokensAsync(string userId)
+    {
+        var db = _multiplexer.GetDatabase();
+        var tokens = await db.SetMembersAsync($"user_refresh:{userId}");
+        var keys = tokens.Select(t => (RedisKey)$"refresh:{t}").Append($"user_refresh:{userId}").ToArray();
+        await db.KeyDeleteAsync(keys);
     }
 
     public async Task<bool> ValidateRefreshTokenAsync(string token)

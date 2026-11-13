@@ -45,7 +45,7 @@ public class AuthService : IAuthService
             string accessToken = _tokenService.GenerateAccessToken(user.UserId, secret, 15);
             string refreshToken = _tokenService.GenerateRefreshToken(user.UserId, user.FirstName, user.LastName, secret, 7 * 24 * 60, request.Timezone);
 
-            await _redisService.SetRefreshTokenAsync(refreshToken, TimeSpan.FromDays(7));
+            await _redisService.SetRefreshTokenAsync(refreshToken, TimeSpan.FromDays(7), user.UserId);
 
             return (true, new LoginResponse(accessToken, "Bearer", 900), refreshToken, null, null, 200);
         }

@@ -2,7 +2,8 @@ namespace TatoToys.Domain.Interfaces;
 
 public interface IRedisCacheService
 {
-    Task SetRefreshTokenAsync(string token, TimeSpan ttl);
+    Task SetRefreshTokenAsync(string token, TimeSpan ttl, string userId);
+    Task InvalidateUserRefreshTokensAsync(string userId);
     Task<bool> ValidateRefreshTokenAsync(string token);
     Task InvalidateRefreshTokenAsync(string token);
 

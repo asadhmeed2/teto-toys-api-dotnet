@@ -108,6 +108,9 @@ public class JwtTokenService : ITokenService
             }, out var validatedToken);
 
             var jwt = (JwtSecurityToken)validatedToken;
+            // Refresh tokens share the signing key but must never pass as a Bearer access token.
+            if (jwt.Claims.Any(c => c.Type == "token_type" && c.Value == "refresh"))
+                return null;
             var userId = jwt.Claims.First(c => c.Type == JwtRegisteredClaimNames.Sub).Value;
             var role = jwt.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value ?? "User";
             var firstName = jwt.Claims.FirstOrDefault(c => c.Type == ClaimTypes.GivenName)?.Value ?? string.Empty;

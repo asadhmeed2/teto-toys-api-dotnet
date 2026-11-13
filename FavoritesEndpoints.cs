@@ -3,9 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using MySql.Data.MySqlClient;
-using System.IdentityModel.Tokens.Jwt;
-using System.Text;
-using Microsoft.IdentityModel.Tokens;
+using TatoToys.Domain.Interfaces;
 
 public static class FavoritesEndpoints
 {
@@ -145,29 +143,9 @@ public static class FavoritesEndpoints
         var secret = config["JWT:Secret"];
         if (string.IsNullOrEmpty(secret)) return null;
 
-        try
-        {
-            var tokenHandler = new JwtSecurityTokenHandler();
-            var key = Encoding.UTF8.GetBytes(secret);
-            tokenHandler.ValidateToken(token, new TokenValidationParameters
-            {
-                ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(key),
-                ValidateIssuer = true,
-                ValidIssuer = "tatotoys-api",
-                ValidateAudience = true,
-                ValidAudience = "tatotoys-frontend",
-                ValidateLifetime = true,
-                ClockSkew = TimeSpan.Zero,
-            }, out var validatedToken);
-
-            var jwt = (JwtSecurityToken)validatedToken;
-            return jwt.Claims.First(c => c.Type == JwtRegisteredClaimNames.Sub).Value;
-        }
-        catch
-        {
-            return null;
-        }
+        // Shared validator: also rejects refresh tokens used as Bearer.
+        var userInfo = context.RequestServices.GetRequiredService<ITokenService>().ValidateAndGetUserInfo(token, secret);
+        return userInfo?.GetType().GetProperty("userId")?.GetValue(userInfo)?.ToString();
     }
 
     private static string GetConnectionString(HttpContext context)

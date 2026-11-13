@@ -74,6 +74,8 @@ public class PasswordResetService : IPasswordResetService
 
             var passwordHash = _passwordHasher.HashPassword(newPassword);
             await _userRepository.UpdatePasswordAsync(userId, passwordHash);
+            // Log out every existing session — an attacker's stolen session must not survive the reset.
+            await _redisService.InvalidateUserRefreshTokensAsync(userId);
 
             return (true, null, null, 200);
         }
