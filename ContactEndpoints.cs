@@ -24,6 +24,18 @@ public static class ContactEndpoints
                 });
             }
 
+            // ponytail: HTML-encode free-text fields so a submitted <script> tag is stored
+            // as inert text, protecting any future consumer (admin UI, email digest, etc.)
+            // that renders these values, regardless of whether that consumer remembers to encode.
+            var name = WebUtility.HtmlEncode(body.Name.Trim());
+            var email = WebUtility.HtmlEncode(body.Email.Trim());
+            var subject = string.IsNullOrWhiteSpace(body.Subject) ? null : WebUtility.HtmlEncode(body.Subject.Trim());
+            var message = WebUtility.HtmlEncode(body.Message.Trim());
+
+            // Bounds match the columns (checked after encoding, which grows the text).
+            if (name.Length > 120 || email.Length > 255 || (subject?.Length ?? 0) > 255 || message.Length > 5000)
+                return Results.BadRequest(new { error = "validation_error", error_description = "name up to 120, email and subject up to 255, message up to 5000 characters." });
+
             var connectionString = GetConnectionString(context);
             await using var conn = new MySqlConnection(connectionString);
             await conn.OpenAsync();
@@ -32,14 +44,11 @@ public static class ContactEndpoints
                 INSERT INTO contact_messages (name, email, subject, message)
                 VALUES (@name, @email, @subject, @message)";
 
-            // ponytail: HTML-encode free-text fields so a submitted <script> tag is stored
-            // as inert text, protecting any future consumer (admin UI, email digest, etc.)
-            // that renders these values, regardless of whether that consumer remembers to encode.
             await using var cmd = new MySqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("@name", WebUtility.HtmlEncode(body.Name.Trim()));
-            cmd.Parameters.AddWithValue("@email", WebUtility.HtmlEncode(body.Email.Trim()));
-            cmd.Parameters.AddWithValue("@subject", string.IsNullOrWhiteSpace(body.Subject) ? (object)DBNull.Value : WebUtility.HtmlEncode(body.Subject.Trim()));
-            cmd.Parameters.AddWithValue("@message", WebUtility.HtmlEncode(body.Message.Trim()));
+            cmd.Parameters.AddWithValue("@name", name);
+            cmd.Parameters.AddWithValue("@email", email);
+            cmd.Parameters.AddWithValue("@subject", (object?)subject ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@message", message);
             await cmd.ExecuteNonQueryAsync();
 
             return Results.Created("/api/contact", new

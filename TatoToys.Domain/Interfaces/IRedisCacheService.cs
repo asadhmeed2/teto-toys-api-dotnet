@@ -10,4 +10,6 @@ public interface IRedisCacheService
     Task SetResetTokenAsync(string key, string userId, TimeSpan ttl);
     Task<string?> GetResetTokenUserIdAsync(string key);
     Task InvalidateResetTokenAsync(string key);
+    /// <summary>SET NX with TTL: true only for the first caller inside the window.</summary>
+    Task<bool> TryAcquireCooldownAsync(string key, TimeSpan ttl);
 }

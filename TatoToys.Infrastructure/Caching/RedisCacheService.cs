@@ -72,4 +72,7 @@ public class RedisCacheService : IRedisCacheService
         var db = _multiplexer.GetDatabase();
         await db.KeyDeleteAsync(key);
     }
+
+    public Task<bool> TryAcquireCooldownAsync(string key, TimeSpan ttl) =>
+        _multiplexer.GetDatabase().StringSetAsync(key, "1", ttl, When.NotExists);
 }

@@ -7,6 +7,9 @@ namespace TatoToys.Application.Services;
 public class PasswordResetService : IPasswordResetService
 {
     private static readonly TimeSpan ResetTokenTtl = TimeSpan.FromMinutes(15);
+    // One reset email per account per 5 minutes, shared with node/flask: stops inbox flooding
+    // and Resend quota burn from distributed requests the per-IP limiter can't see.
+    private static readonly TimeSpan ResetCooldown = TimeSpan.FromMinutes(5);
 
     private readonly IUserRepository _userRepository;
     private readonly IPasswordHasher _passwordHasher;
@@ -40,13 +43,16 @@ public class PasswordResetService : IPasswordResetService
         {
             // Always return success to prevent user enumeration attacks
             var user = await _userRepository.GetByEmailAsync(email.Trim());
-            if (user != null && user.IsActive)
+            if (user != null && user.IsActive
+                && await _redisService.TryAcquireCooldownAsync($"reset_cooldown:{user.UserId}", ResetCooldown))
             {
                 var token = RandomNumberGenerator.GetHexString(64, lowercase: true);
                 await _redisService.SetResetTokenAsync(ResetKey(token), user.UserId, ResetTokenTtl);
 
                 var resetLink = $"{_frontendBaseUrl}/reset-password?token={token}";
-                await _emailService.SendPasswordResetEmailAsync(user.Email, resetLink);
+                // Log, don't fail: a send failure (bounce, quota, outage) must still return the generic 200, or 500-vs-200 tells an attacker which emails have accounts.
+                try { await _emailService.SendPasswordResetEmailAsync(user.Email, resetLink); }
+                catch (Exception ex) { Console.Error.WriteLine($"ForgotPassword email send failed: {ex.Message}"); }
             }
 
             return (true, null, null, 200);
