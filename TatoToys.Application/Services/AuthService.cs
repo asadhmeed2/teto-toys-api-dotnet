@@ -96,6 +96,10 @@ public class AuthService : IAuthService
         if (request.Password.Length < 8)
             return (false, null, "invalid_request", "Password must be at least 8 characters.", 400);
 
+        // bcrypt ignores bytes past 72; reject instead of silently truncating.
+        if (System.Text.Encoding.UTF8.GetByteCount(request.Password) > 72)
+            return (false, null, "invalid_request", "Password must be at most 72 bytes.", 400);
+
         if (request.Password != request.ConfirmPassword)
             return (false, null, "invalid_request", "Passwords do not match.", 400);
 
